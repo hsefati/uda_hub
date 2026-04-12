@@ -1,5 +1,5 @@
 .env
 *.pyc
 *.db
-samples/**/*.ipynb
-samples/**/*.py
+*/samples/**/*.ipynb
+*/samples/**/*.py

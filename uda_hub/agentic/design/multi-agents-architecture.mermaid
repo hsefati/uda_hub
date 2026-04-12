@@ -1,0 +1,60 @@
+graph TD
+    %% Styling Classes
+    classDef intake fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px,color:#000
+    classDef router fill:#fff3e0,stroke:#ff9800,stroke-width:2px,color:#000
+    classDef worker fill:#e8f5e9,stroke:#4caf50,stroke-width:2px,color:#000
+    classDef safety fill:#ffebee,stroke:#f44336,stroke-width:2px,color:#000
+    classDef memory fill:#f3e5f5,stroke:#9c27b0,stroke-width:2px,color:#000
+    classDef db fill:#eceff1,stroke:#607d8b,stroke-width:2px,color:#000,shape:cylinder
+    classDef system fill:#eceff1,stroke:#9e9e9e,stroke-width:2px,stroke-dasharray: 5 5,color:#000
+
+    %% Databases
+    UDAHUB[(udahub.db<br/>Support Memory)]:::db
+    CULTPASS[(cultpass.db<br/>Client Data)]:::db
+
+    %% Raw Input
+    Webhook[Raw Zendesk/Intercom Webhook] --> StateHub((LangGraph State)):::memory
+
+    %% -------------------------
+    %% The 100% Encapsulated LangGraph
+    %% -------------------------
+    subgraph UDA-Hub Multi-Agent Graph
+        
+        %% 1. Deterministic System Node
+        Enricher[Data Enricher Node<br/>*Python DB Query*]:::system
+        
+        %% 2. AI Nodes
+        Classifier(Classifier Agent<br/>*Parses Intent/Urgency*):::intake
+        Supervisor{Supervisor Agent<br/>*Logic Router*}:::router
+        Clarification(Clarification Agent<br/>*Asks user for email*):::worker
+        Researcher(Researcher Agent<br/>*ReAct Loop*):::worker
+        Drafter(Drafter Agent<br/>*Brand Voice*):::worker
+        QA{QA/Guardrail Agent<br/>*Policy Check*}:::safety
+        Escalation(Escalation Agent<br/>*Human Handoff*):::worker
+        Archivist(Archivist Agent<br/>*Data Saver*):::memory
+
+        %% Flow
+        StateHub --> Enricher
+        Enricher --> Classifier
+        Classifier --> Supervisor
+        
+        Supervisor -- "Missing Data" --> Clarification
+        Supervisor -- "Needs Handoff" --> Escalation
+        Supervisor -- "Ready to Solve" --> Researcher
+        
+        Researcher -- "JSON Facts" --> Drafter
+        Drafter -- "Draft Message" --> QA
+        
+        QA -- "Fails Policy" --> Drafter
+        QA -- "Passes" --> Output[Send Reply to Customer]
+        
+        Output -. "Session Closed" .-> Archivist
+    end
+
+    %% Database Connections (All internal to Graph now)
+    Enricher -. "1. Fetch Metadata (SQL)" .-> CULTPASS
+    Researcher -. "2. Search Policies (RAG)" .-> UDAHUB
+    Researcher -. "3. Tool APIs" .-> CULTPASS
+    Archivist -. "4. Save Transcript (SQL)" .-> UDAHUB
+    
+    Escalation --> HumanQueue[Zendesk Human Queue]
