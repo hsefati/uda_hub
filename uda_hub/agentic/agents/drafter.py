@@ -2,8 +2,10 @@ import os
 from dotenv import load_dotenv
 
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import AIMessage
 from langchain.agents import create_agent
 from uda_hub.agentic.tools.udahub_state import UDAHubState
+from langchain_core.messages import HumanMessage
 
 load_dotenv()
 
@@ -82,9 +84,12 @@ def drafter_node(state: UDAHubState):
     # We pass the context as a fresh HumanMessage to trigger a new draft
     result = drafter_agent.invoke({"messages": [("user", context_payload)]}, config)
 
+    response_text = result["messages"][-1].content
+
     # 4. Clear the feedback in the return so the next QA check starts fresh
     return {
         "ai_response": result["messages"][-1].content,
+        "messages": [AIMessage(content=response_text)],
         "policy_feedback": None,  # Resetting feedback after attempt
     }
 
@@ -92,10 +97,11 @@ def drafter_node(state: UDAHubState):
 # ==========================================
 # 5. TEST SCRIPT
 # ==========================================
-if __name__ == "__main__":
-    print("--- RUNNING DRAFTER TEST (Alice Kingsley) ---")
 
-    # We mock the exact state that the Researcher just outputted in our last test!
+if __name__ == "__main__":
+    print("🚀 --- RUNNING DRAFTER TEST (Alice Kingsley ---")
+
+    # Mocking the state exactly as it would appear after the Researcher node
     mock_facts = """
     - Booking Status: The user has a reservation for the 'Christ the Redeemer Experience' with the status 'reserved'.
     - Refund Policy: CultPass plans are generally non-refundable after the billing cycle starts.
@@ -103,6 +109,12 @@ if __name__ == "__main__":
     """
 
     test_state: UDAHubState = {
+        # Option B requirement: The message history from the chat UI
+        "messages": [
+            HumanMessage(
+                content="I have a reservation for the Christ the Redeemer Experience but I can't go anymore. What is your refund policy for events?"
+            )
+        ],
         "ticket_text": "I have a reservation for the Christ the Redeemer Experience but I can't go anymore. What is your refund policy for events?",
         "user_email": "alice.kingsley@wonderland.com",
         "user_id": "a4ab87",
@@ -112,6 +124,8 @@ if __name__ == "__main__":
         "urgency": "standard",
         "research_facts": mock_facts.strip(),
         "ai_response": None,
+        "policy_grade": None,
+        "policy_feedback": None,
     }
 
     print("\nOriginal Ticket:", test_state["ticket_text"])
@@ -124,4 +138,10 @@ if __name__ == "__main__":
 
     print("\n✅ FINAL EMAIL TO CUSTOMER:\n")
     print(result["ai_response"])
+
+    print("\n🛠️  OPTION B VERIFICATION:")
+    if "messages" in result:
+        last_msg = result["messages"][-1]
+        print(f"Chat UI Output: [{type(last_msg).__name__}] {last_msg.content[:50]}...")
+
     print("-" * 50)

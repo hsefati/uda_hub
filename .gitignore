@@ -3,3 +3,5 @@
 *.db
 */samples/**/*.ipynb
 */samples/**/*.py
+uda_hub.egg-info/**
+.DS_Store

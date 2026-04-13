@@ -2,8 +2,10 @@ import os
 
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 from uda_hub.agentic.tools.udahub_state import UDAHubState
+from langchain_core.messages import HumanMessage
 
 load_dotenv()
 
@@ -50,9 +52,8 @@ def escalation_node(state: UDAHubState) -> dict:
         ]
     )
 
-    chain = escalation_prompt | llm
-
-    response = chain.invoke(
+    internal_chain = escalation_prompt | llm
+    internal_note = internal_chain.invoke(
         {
             "tier": tier,
             "status": status,
@@ -60,18 +61,35 @@ def escalation_node(state: UDAHubState) -> dict:
             "urgency": urgency,
             "ticket_text": ticket_text,
         }
+    ).content
+
+    public_msg = (
+        f"I've reviewed your request regarding {category}. Because this requires specialized "
+        f"assistance, I am handing this conversation over to one of our human experts. "
+        f"They will be with you shortly!"
     )
 
-    # Return the drafted summary and change the graph status to pending_human
-    return {"handoff_summary": response.content, "status": "pending_human"}
+    # 4. Return everything needed for Option B
+    return {
+        "handoff_summary": internal_note,
+        "ai_response": public_msg,  # The string version
+        "messages": [AIMessage(content=public_msg)],  # The Chat UI version
+        "status": "pending_human",
+    }
 
 
 if __name__ == "__main__":
-    print("--- Testing Escalation Agent ---\n")
+    print("🚀 --- Testing Escalation Agent ---\n" + "=" * 50)
 
     # Test Case: Frank Ocean (VIP Premium User) is furious about a double charge.
     # The Supervisor routed this here because Urgency = "high".
     state_vip_escalation: UDAHubState = {
+        # Option B requirement: The actual message history from the chat UI
+        "messages": [
+            HumanMessage(
+                content="I was charged twice for the Samba Night experience! This is unacceptable, refund me immediately or I'm canceling my premium membership."
+            )
+        ],
         "ticket_text": "I was charged twice for the Samba Night experience! This is unacceptable, refund me immediately or I'm canceling my premium membership.",
         "user_email": "frank.ocean@seawaves.io",
         "user_id": "e6376d",
@@ -85,8 +103,21 @@ if __name__ == "__main__":
         "status": "in_progress",
     }
 
+    # Run the node
     result = escalation_node(state_vip_escalation)
 
-    print("INTERNAL HUMAN HANDOFF NOTE GENERATED:\n")
-    print(result["handoff_summary"])
-    print(f"\n[System Status Changed To: {result['status']}]")
+    print("📝 INTERNAL HUMAN HANDOFF NOTE (For Agent Dashboard):")
+    print("-" * 50)
+    print(result.get("handoff_summary"))
+    print("-" * 50)
+
+    print("\n💬 PUBLIC RESPONSE (Sent to Chat Interface):")
+    if "messages" in result:
+        last_msg = result["messages"][-1]
+        print(f"Assistant: {last_msg.content}")
+
+    print(f"\n⚙️  SYSTEM STATUS: {result.get('status')}")
+    print("=" * 50)
+    print(
+        "✅ Test Complete: Escalation properly handles both the user and the support team."
+    )

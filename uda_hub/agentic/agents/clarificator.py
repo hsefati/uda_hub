@@ -2,7 +2,9 @@ import os
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import AIMessage
 from uda_hub.agentic.tools.udahub_state import UDAHubState
+from langchain_core.messages import HumanMessage
 
 load_dotenv()
 
@@ -18,12 +20,12 @@ llm = ChatOpenAI(
 def clarification_node(state: UDAHubState) -> dict:
     """
     Drafts a polite message asking the user for missing information (like an email).
-    Flags the state as 'pending_user' so the system knows to wait.
+    Ensures the chat interface can display the message via the messages key.
     """
     category = state.get("category", "general issue")
     ticket_text = state.get("ticket_text", "")
 
-    # We use a very focused prompt. We don't want it trying to solve the problem.
+    # Focused prompt for identity recovery
     prompt = ChatPromptTemplate.from_messages(
         [
             (
@@ -38,23 +40,34 @@ def clarification_node(state: UDAHubState) -> dict:
         ]
     )
 
+    # Note: 'llm' must be defined in your file or imported
     chain = prompt | llm
 
     response = chain.invoke({"category": category, "ticket_text": ticket_text})
 
-    # Return the drafted message and change the status
-    return {"ai_response": response.content, "status": "pending_user"}
+    # Extract the string content from the LLM response
+    response_text = response.content
+
+    # Return the drafted message to our internal state and the message list for the UI
+    return {
+        "ai_response": response_text,
+        "messages": [AIMessage(content=response_text)],
+    }
 
 
 if __name__ == "__main__":
-    print("--- Testing Clarification Agent ---\n")
+    print("🚀 --- Testing Clarification Agent ---\n" + "=" * 50)
 
     # Test Case: An anonymous user complaining about a billing charge
-    # (The Supervisor routed them here because user_id was None)
+    # Note: In Option B, the 'messages' list is the source of truth for the UI
     state_missing_info: UDAHubState = {
+        "messages": [
+            HumanMessage(
+                content="I was charged $50 yesterday but I canceled my account!"
+            )
+        ],
         "ticket_text": "I was charged $50 yesterday but I canceled my account!",
         "category": "billing",
-        # Missing data:
         "user_email": None,
         "user_id": None,
         "customer_tier": None,
@@ -65,11 +78,22 @@ if __name__ == "__main__":
         "status": "in_progress",
     }
 
+    # Run the node
     result = clarification_node(state_missing_info)
 
-    print(f"User Said:   {state_missing_info['ticket_text']}")
-    print(f"AI Response: {result['ai_response']}")
-    print(f"New Status:  {result['status']}")
+    print(f"User Input:    {state_missing_info['ticket_text']}")
+    print(f"AI String:     {result['ai_response']}")
 
-    # Expected Output Example:
-    # "I'd be happy to look into that charge for you! Could you please reply with the email address associated with your canceled account?"
+    # Verify Option B compatibility
+    if "messages" in result:
+        last_msg = result["messages"][-1]
+        print(f"UI Message:    [{type(last_msg).__name__}] {last_msg.content}")
+
+    # If you kept the 'status' update in your node logic:
+    if "status" in result:
+        print(f"Graph Status:  {result['status']}")
+
+    print("=" * 50)
+    print(
+        "✅ Test Complete: The response is now properly packaged for the chat_interface."
+    )
