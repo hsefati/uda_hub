@@ -73,7 +73,7 @@ def model_to_dict(instance):
 #         print("Assistant:", result["messages"][-1].content)
 #         is_first_iteration = False
 
-dchat_interface(agent: CompiledStateGraph, ticket_id: str):
+def chat_interface(agent: CompiledStateGraph, ticket_id: str):
     print(f"--- Session Started (Thread: {ticket_id}) ---")
     
     # Optional: Send an initial setup if it's a brand new thread
