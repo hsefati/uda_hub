@@ -1,6 +1,5 @@
 .env
 *.pyc
-*.db
 */samples/**/*.ipynb
 */samples/**/*.py
 uda_hub.egg-info/**
