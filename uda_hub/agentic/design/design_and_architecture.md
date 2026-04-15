@@ -4,39 +4,46 @@ This document outlines the architecture for the UDA-Hub Agentic Customer Support
 
 ## 1. System Overview
 
-The UDA-Hub system utilizes a Directed Acyclic Graph (DAG) with self-correction loops to process customer inquiries. Unlike a single monolithic chatbot, this architecture breaks the problem into specialized roles, ensuring that data retrieval, policy enforcement, and brand voice are handled by distinct, optimized agents.
+The UDA-Hub system utilizes a Directed Acyclic Graph (DAG) with Dynamic Anchoring and self-correction loops. The architecture treats every interaction as a turn-based progression through specialized nodes, ensuring that security (Identity Gates) and quality (Policy Audits) are never bypassed.
 
 ## 2. Visual Diagram (Mermaid)
 
 ```mermaid
 graph TD
     %% Entry Point
-    Start((Ticket Received)) --> Enricher[Enricher Agent]
+    Start((User Input)) --> Bridge[Entry Bridge]
+    Bridge --> Enricher[Enricher Agent]
     Enricher --> Classifier[Classifier Agent]
 
     %% Router Logic
     Classifier --> Supervisor{Supervisor Router}
 
     %% Branching Paths
-    Supervisor -- "Missing Data" --> Clarifier[Clarificator Agent]
-    Supervisor -- "Angry VIP / High Risk" --> Escalator[Escalator Agent]
-    Supervisor -- "Automate" --> Researcher[Researcher Agent]
+    Supervisor -- "No Ticket + Greeting" --> Greeter[Greeter Agent]
+    Supervisor -- "Ticket + Missing ID" --> Clarifier[Clarifier Agent]
+    Supervisor -- "Angry/VIP/High Risk" --> Escalator[Escalator Agent]
+    Supervisor -- "User Satisfied" --> Closer[Closer Agent]
+    Supervisor -- "Authenticated Ticket" --> Researcher[Researcher Agent]
 
     %% Main Automation Loop
     Researcher --> Drafter[Drafter Agent]
     Drafter --> QA[Policy Checker Agent]
 
     %% Self-Correction Loop
-    QA -- "FAIL: Hallucination/Error" --> Drafter
+    QA -- "FAIL: Policy Violation" --> Drafter
 
-    %% Finalization
-    QA -- "PASS" --> Archivist[Archivist Agent]
+    %% The 'All Roads Lead to Rome' Archive Pattern
+    Greeter --> Archivist[Archivist Agent]
+    Clarifier --> Archivist
+    Escalator --> Archivist
+    Closer --> Archivist
+    QA -- "PASS" --> Archivist
+
     Archivist --> End((Resolved/Logged))
 
     %% Data Connections
     Researcher -.-> DB1[(udahub.db)]
-    Researcher -.-> DB2[(cultpass.db)]
-    Enricher -.-> DB2
+    Enricher -.-> DB2[(cultpass.db)]
     Archivist -.-> DB1
 ```
 
@@ -44,53 +51,52 @@ graph TD
 
 | Agent | Responsibility | Key Input | Key Output |
 |---|---|---|---|
-| Enricher | Authenticates the user by matching email/ID against the database. | user_email | user_id, customer_tier, status |
-| Classifier | Identifies the intent (Billing, Tech, Account) and assesses urgency. | ticket_text | category, urgency, confidence |
-| Clarifier | Requests missing information from the user if identity is unknown. | category | ai_response (request for info) |
-| Escalator | Hands off high-risk or angry VIP tickets to human agents. | urgency | ai_response (escalation notice) |
-| Researcher | Queries SQLite databases to find specific bookings and policies. | user_id, query | research_facts (bulleted list) |
-| Drafter | Writes the final empathetic response based on facts and user tier. | research_facts | ai_response (email draft) |
-| Policy Checker | Audits the draft for hallucinations or policy violations. | ai_response | policy_grade (PASS/FAIL) |
-| Archivist | Summarizes the interaction and logs metadata to the core DB. | ai_response | archive_summary, DB Entry |
+| Enricher | Mines history for Name/Email/ID and queries cultpass.db. | messages, latest_input | user_id, customer_tier |
+| Classifier | Identifies intent and preserves the "Ticket Anchor." | messages, latest_input | category, ticket_text |
+| Greeter | Handles pleasantries when no active ticket is present. | user_name | ai_response |
+| Clarifier | Politely requests missing identification details. | ticket_text, messages | ai_response, status: pending_user |
+| Escalator | Hands off high-risk/VIP tickets to human managers. | urgency, ticket_text | ai_response, status: pending_human |
+| Researcher | Queries SQLite to find bookings and relevant policies. | user_id, ticket_text | research_facts |
+| Drafter | Synthesizes research into an empathetic email draft. | research_facts, tier | ai_response |
+| Policy Checker | Audits the draft for policy compliance/hallucinations. | ai_response, facts | policy_grade (PASS/FAIL) |
+| Closer | Finalizes the interaction when a user is satisfied. | messages | ai_response, status: closed |
+| Archivist | Tool-based agent that logs summaries to udahub.db. | ai_response, user_id | archive_summary, DB Entry |
 
 ## 4. Information Flow & Decision Making
 
-### A. The "Gatekeeper" Flow (Supervisor Router)
+### A. The "Anchor Shield" (Hijack Protection)
 
-The system uses a logic-based router after the Classification stage.
+The Supervisor uses the `ticket_text` (Anchor) to prevent context switching.
 
-- **Logical Condition:** If `urgency == "high"`, the system immediately diverts to the Escalator.
-- **Security Condition:** If `category == "billing"` but `user_id` is null, it diverts to the Clarifier.
-- **Default:** Otherwise, it triggers the Researcher to begin automation.
+- **Rule:** If `ticket_text` is populated, a greeting classification is ignored, and the user is kept in the identification or research loop.
+- **Rule:** If `user_id` is found mid-conversation (via the history-aware Enricher), the user is immediately promoted to the Researcher.
 
-### B. The Research-Validation Loop
+### B. The Identity Gate
 
-This is the "Brain" of the system.
+The Archivist acts as the final gatekeeper for data integrity.
 
-- **Fact Gathering:** The Researcher uses SQL tools to pull data. It outputs raw facts.
-- **Synthesis:** The Drafter turns raw facts into a natural language response.
-- **Audit:** The Policy Checker acts as a "Legal Department." It compares the Draft against the Facts.
-- **Feedback Loop:** If the Policy Checker finds a promise (e.g., a refund) that isn't in the facts, it sends the state back to the Drafter with specific correction instructions.
+- **Condition:** If `user_id` is null, the Archivist bypasses the database write to prevent "anonymous clutter" in the production logs.
+- **Exception:** High-urgency escalations may be archived even without a `user_id` to provide context for human agents.
+
+### C. The Satisfaction Loop
+
+The system monitors for satisfaction or gratitude intents (e.g., "Thanks, that works!").
+
+Once detected, the Supervisor routes to the Closer, which sets the state `status` to `closed`, signaling the Archivist to seal the ticket record in the database.
 
 ## 5. Input Handling & Expected Outputs
 
 ### Input Types
 
-- **Standard Query:** "I forgot my password."
-  - Path: Enricher → Classifier → Researcher → Drafter → QA → Archivist.
-- **Unauthorized Sensitive Request:** "Give me a refund," sent from an unregistered email.
-  - Path: Enricher (Fail) → Classifier (Billing) → Supervisor → Clarifier.
-- **High Urgency/VIP:** "I'm a Premium member and I'm stranded at the airport!"
-  - Path: Enricher (Premium) → Classifier (High Urgency) → Supervisor → Escalator.
-
-### Expected Outputs
-
-- **Successful Automation:** A professional email drafted in the UDA-Hub brand voice, confirmed against official policies, and logged in the database.
-- **Clarification Request:** A polite request for the user to provide their account email.
-- **Internal Metadata:** Updated `ticket_metadata` in `udahub.db` with tags (e.g., `#refund_denied`, `#tech_resolved`).
+- **The "Alice" Scenario (Interrupted ID):** "Refund?" → "I need your email." → "I'm Alice."
+  - Path: Clarifier → User Input → Enricher (Finds ID) → Supervisor (Sees ID + Anchor) → Researcher.
+- **The "Polite Closure" Scenario:** "Thanks for the help, goodbye!"
+  - Path: Classifier (Satisfaction) → Supervisor → Closer → Archivist (Status: Closed).
+- **The "Ghost" Interaction:** A bot saying "Hello" repeatedly.
+  - Path: Classifier (Greeting) → Greeter → Archivist (Identity Gate Bypass) → END.
 
 ## 6. Implementation Strategy
 
-- **State Management:** LangGraph `UDAHubState` (TypedDict) acts as the single source of truth.
-- **Persistence:** `MemorySaver` (Checkpointer) allows the system to pause for clarification and resume exactly where it left off once the user provides missing data.
-- **Safety:** The Policy Checker uses a temperature of `0.0` to ensure strict adherence to provided facts.
+- **History Awareness:** All extraction nodes (Enricher, Classifier) scan the `messages` list rather than just the latest string to ensure context is never lost.
+- **Tool Separation:** Database SQL logic is isolated into standalone `@tool` functions, allowing the Agents to remain model-agnostic and easily testable.
+- **State Hygiene:** The `entry_bridge` node resets turn-specific flags (`policy_grade`, `research_facts`) to ensure each turn starts with a clean slate while preserving the conversation memory.
