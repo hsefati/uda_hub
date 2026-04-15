@@ -11,17 +11,12 @@ from uda_hub.agentic.tools.tools import ARCHIVIST_TOOLS
 load_dotenv()
 
 
-# ==========================================
-# 2. AGENT INSTANCE
-# ==========================================
 llm = ChatOpenAI(
     model="gpt-4o-mini",  # Cheap model is perfect for summarization/data extraction
     temperature=0.0,
     base_url="https://openai.vocareum.com/v1",
     api_key=os.getenv("VOCAREUM_API_KEY"),
 )
-
-# https://github.com/Ohara124c41/agentic_ai_langchain_langgraph/tree/main/autonomous_knowledge_agent/solution
 
 archivist_agent = create_agent(
     name="archivist_agent",
