@@ -10,9 +10,6 @@ from langchain_core.messages import HumanMessage
 load_dotenv()
 
 
-# ==========================================
-# 2. AGENT FACTORY (Reused for consistency)
-# ==========================================
 def create_agent_wrapper(name: str, model, tools: list, system_prompt: str):
     """
     Returns a compiled LangGraph ReAct agent.
@@ -25,9 +22,6 @@ def create_agent_wrapper(name: str, model, tools: list, system_prompt: str):
     )
 
 
-# ==========================================
-# 3. AGENT INSTANCE
-# ==========================================
 llm = ChatOpenAI(
     model="gpt-4o",  # You could also use gpt-4o-mini here to save money, as drafting is easy
     temperature=0.4,  # Slightly higher temperature allows for more natural, empathetic writing
@@ -40,63 +34,63 @@ drafter_agent = create_agent_wrapper(
     model=llm,
     tools=[],  # NO TOOLS! The Drafter is not allowed to search.
     system_prompt=(
-        "You are the UDA-Hub Drafter Agent. Your ONLY job is to write the final response to the customer.\n\n"
-        "RULES:\n"
-        "1. You will be given the original ticket, the customer's tier, and the 'Research Facts'.\n"
-        "2. BASE YOUR ANSWER ENTIRELY ON THE RESEARCH FACTS. Do not invent policies, prices, or promises.\n"
-        "3. Be empathetic and professional.\n"
-        "4. If the customer is 'premium', specifically thank them for being a premium member.\n"
-        "5. If the subscription is 'cancelled', acknowledge that respectfully.\n"
-        "6. Do not include internal system notes. Write directly to the customer."
+        "You are the UDA-Hub Drafter Agent. Your mission is to write a final, polished response to the customer.\n\n"
+        "STRICT PROTOCOLS:\n"
+        "1. ANCHORING: Your subject is the 'Anchored Ticket'. Do not get distracted by follow-up chat history.\n"
+        "2. EVIDENCE-BASED: Base your response ENTIRELY on the provided 'Research Facts'.\n"
+        "   - If the Researcher found a specific policy (e.g., non-refundable), cite it gently[cite: 227, 502].\n"
+        "   - If a specific reservation was found (or not found), mention it clearly[cite: 730, 919].\n"
+        "3. TONE: Be empathetic. Use the 'Customer Tier' to adjust formality (Concierge style for VIPs).\n"
+        "4. PERSONALIZATION: If a user name is provided, address them by name.\n"
+        "5. STATUS: If the subscription is 'cancelled', acknowledge it respectfully[cite: 807].\n"
+        "6. NO GIBBERISH: Do not invent facts, dates, or ticket IDs."
     ),
 )
 
 
-# ==========================================
-# 4. LANGGRAPH NODE
-# ==========================================
 def drafter_node(state: UDAHubState):
     """
-    Takes facts and any previous feedback to draft or revise the email.
+    Revised Drafter: Uses full history for tone/context,
+    but anchors the content to the Research Facts.
     """
-    # 1. Base Context
-    context_payload = (
-        f"Customer Tier: {state.get('customer_tier')}\n"
-        f"Subscription Status: {state.get('subscription_status')}\n"
-        f"Original Ticket: {state.get('ticket_text')}\n"
-        f"--- RESEARCH FACTS ---\n"
-        f"{state.get('research_facts')}\n"
+    # 1. Prepare the 'Ground Truth' for this specific turn
+    # This acts as the "North Star" for the agent
+    evidence_instruction = (
+        f"--- CURRENT GROUND TRUTH ---\n"
+        f"ANCHORED GOAL: {state.get('ticket_text')}\n"
+        f"RESEARCH FINDINGS: {state.get('research_facts')}\n"
+        f"USER PROFILE: {state.get('user_name')} ({state.get('customer_tier')})\n"
+        "----------------------------\n"
+        "INSTRUCTION: Use the conversation history below to match the user's tone, "
+        "but ensure your answer is strictly based on the GROUND TRUTH above."
     )
 
-    # 2. Injection of Policy Feedback (The "Fix-it" Instruction)
+    # 2. Add Policy Feedback if we are looping back from a FAIL
     feedback = state.get("policy_feedback")
     if feedback:
-        context_payload += (
-            f"\n--- ATTENTION: PREVIOUS DRAFT REJECTED ---\n"
-            f"Your previous draft failed policy review for the following reason:\n"
-            f"{feedback}\n"
-            f"Please rewrite the response to correct these issues while remaining empathetic."
+        evidence_instruction += (
+            f"\n\nSTRICT REVISION NEEDED: Your previous draft was rejected: {feedback}"
         )
 
-    # 3. Invoke the agent
-    config = {"configurable": {"thread_id": state.get("user_id", "default_thread")}}
+    # 3. Construct the message list for the agent
+    # We take the existing conversation history and append our 'Ground Truth' as an instruction
+    full_history = state.get("messages", [])
+    agent_input = full_history + [HumanMessage(content=evidence_instruction)]
 
-    # We pass the context as a fresh HumanMessage to trigger a new draft
-    result = drafter_agent.invoke({"messages": [("user", context_payload)]}, config)
+    config = {"configurable": {"thread_id": state.get("user_id", "drafting_turn")}}
+
+    # 4. Invoke the Agent
+    result = drafter_agent.invoke({"messages": agent_input}, config)
 
     response_text = result["messages"][-1].content
 
-    # 4. Clear the feedback in the return so the next QA check starts fresh
     return {
-        "ai_response": result["messages"][-1].content,
+        "ai_response": response_text,
+        # We append the AI's final answer to the history
         "messages": [AIMessage(content=response_text)],
-        "policy_feedback": None,  # Resetting feedback after attempt
+        "policy_feedback": None,
     }
 
-
-# ==========================================
-# 5. TEST SCRIPT
-# ==========================================
 
 if __name__ == "__main__":
     print("🚀 --- RUNNING DRAFTER TEST (Alice Kingsley ---")
@@ -142,6 +136,6 @@ if __name__ == "__main__":
     print("\n🛠️  OPTION B VERIFICATION:")
     if "messages" in result:
         last_msg = result["messages"][-1]
-        print(f"Chat UI Output: [{type(last_msg).__name__}] {last_msg.content[:50]}...")
+        print(f"Chat UI Output: [{type(last_msg).__name__}] {last_msg.content}")
 
     print("-" * 50)

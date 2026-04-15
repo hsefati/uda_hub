@@ -1,6 +1,7 @@
 import os
 import json
-from typing import TypedDict, Optional
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 from langchain_openai import ChatOpenAI
@@ -10,92 +11,177 @@ from uda_hub.agentic.tools.udahub_state import UDAHubState
 load_dotenv()
 
 
-# ==========================================
-# 2. AGENT INSTANCE
-# ==========================================
 llm = ChatOpenAI(
-    model="gpt-4o", 
-    temperature=0.0, # CRITICAL: 0.0 for strict logic and compliance
+    model="gpt-4o",
+    temperature=0.0,  # CRITICAL: 0.0 for strict logic and compliance
     base_url="https://openai.vocareum.com/v1",
     api_key=os.getenv("VOCAREUM_API_KEY"),
 )
 
-# We use a system prompt that enforces a JSON output structure
-policy_checker_agent = create_agent(
-    model=llm,
-    tools=[], 
-    system_prompt=(
-        "You are the UDA-Hub Policy Compliance Officer. Your job is to audit the drafted response.\n\n"
-        "COMPARISON STEPS:\n"
-        "1. Compare the 'Proposed Email' against the 'Research Facts'.\n"
-        "2. Check for Hallucinations: Did the drafter promise a refund or action NOT supported by the facts?\n"
-        "3. Check for Omissions: Did the drafter forget a critical instruction from the policy?\n\n"
-        "OUTPUT REQUIREMENT:\n"
-        "You must output your final decision in valid JSON format with these exact keys:\n"
-        "{\n"
-        "  \"grade\": \"PASS\" or \"FAIL\",\n"
-        "  \"feedback\": \"Explanation of why it failed or an empty string if it passed.\"\n"
-        "}"
-    ),
-    name="policy_checker"
+
+# 1. The Schema (The "What")
+class PolicyGrade(BaseModel):
+    grade: str = Field(description="Must be 'PASS' or 'FAIL'")
+    feedback: str = Field(description="Specific instructions for the drafter if FAIL")
+
+
+# 2. The Prompt Template (The "How")
+# This provides the clarity and logic instructions you were asking about
+qa_prompt_template = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            (
+                "You are the UDA-Hub Quality Auditor. Your goal is to ensure customer responses "
+                "are 100% compliant with company research and the user's specific request.\n\n"
+                "STRICT RULES:\n"
+                "1. If the research says 'No Refund', any promise of a refund is a FAIL.\n"
+                "2. If the user's name is known, it must be used.\n"
+                "3. No internal system IDs (e.g., e6376d) should be visible to the customer."
+            ),
+        ),
+        (
+            "human",
+            (
+                "Compare this DRAFT against these FACTS and the original GOAL.\n\n"
+                "GOAL: {ticket_text}\n"
+                "FACTS: {research_facts}\n"
+                "DRAFT: {ai_response}"
+            ),
+        ),
+    ]
 )
 
-# ==========================================
-# 3. LANGGRAPH NODE
-# ==========================================
+# 3. The Binding
+# We bind the schema to the LLM
+structured_llm = llm.with_structured_output(PolicyGrade)
+
+# 4. The Execution Chain
+# This combines the logic (prompt) with the format (structured_llm)
+qa_chain = qa_prompt_template | structured_llm
+
+# We use a system prompt that enforces a JSON output structure
+policy_checker_agent = create_agent(
+    model=structured_llm,
+    tools=[],
+    system_prompt=(
+        "You are the UDA-Hub Quality Auditor. Your job is to audit the drafted response.\n\n"
+        "STRICT AUDIT CRITERIA:\n"
+        "1. ANCHOR ALIGNMENT: Does the email address the 'Anchored Ticket Goal'? If the goal was a refund, did they discuss the refund?\n"
+        "2. FACTUAL TRUTH: Compare the 'Proposed Email' against the 'Research Facts'. \n"
+        "   - If facts say 'No Refund', the email MUST NOT promise a refund.\n"
+        "   - If facts say 'Experience is at 5 PM', the email MUST NOT say 6 PM.\n"
+        "3. TIER COMPLIANCE: Ensure 'Premium' perks aren't offered to 'Basic' users.\n"
+        "4. NO INTERNAL LEAKS: Ensure no internal user IDs or raw database rows are in the draft.\n\n"
+        "If ANY criteria are failed, set grade to 'FAIL' and provide specific 'Fix-it' instructions."
+    ),
+    name="policy_checker",
+)
+
+
+# def policy_checker_node(state: UDAHubState):
+#     """
+#     Audits the draft against the 'Ground Truth' and the 'Anchored Goal'.
+#     """
+#     # We provide the Auditor with the original goal and the facts to compare against the draft
+#     audit_context = (
+#         f"--- THE ANCHORED GOAL ---\n{state.get('ticket_text')}\n\n"
+#         f"--- RESEARCH FACTS (GROUND TRUTH) ---\n{state.get('research_facts')}\n\n"
+#         f"--- PROPOSED EMAIL DRAFT ---\n{state.get('ai_response')}\n\n"
+#         f"--- USER CONTEXT ---\nTier: {state.get('customer_tier')}"
+#     )
+
+#     # Use a specific thread_id for the audit turn
+#     config = {"configurable": {"thread_id": f"audit_{state.get('user_id', 'temp')}"}}
+
+#     # Invoke the auditor
+#     result = policy_checker_agent.invoke(
+#         {"messages": [("user", audit_context)]},
+#         config
+#     )
+
+#     # Because we used with_structured_output, result is a PolicyGrade object (if using direct LLM)
+#     # If using create_react_agent, we access the structured output from the last message
+#     # Note: For simple structured auditing, calling the LLM directly is often cleaner than a ReAct agent
+
+#     # Alternative direct call for higher reliability in structured nodes:
+#     data = structured_llm.invoke(audit_context)
+
+#     return {
+#         "policy_grade": data.grade,
+#         "policy_feedback": data.feedback if data.grade == "FAIL" else None
+#     }
+
+
 def policy_checker_node(state: UDAHubState):
-    """
-    Audits the draft and determines if the graph needs to loop back or finish.
-    """
-    context = (
-        f"--- RESEARCH FACTS ---\n{state.get('research_facts')}\n\n"
-        f"--- PROPOSED EMAIL ---\n{state.get('ai_response')}"
+    data: PolicyGrade = qa_chain.invoke(
+        {
+            "ticket_text": state.get("ticket_text"),
+            "research_facts": state.get("research_facts"),
+            "ai_response": state.get("ai_response"),
+        }
     )
 
-    config = {"configurable": {"thread_id": "qa_audit"}}
-    result = policy_checker_agent.invoke(
-        {"messages": [("user", context)]}, 
-        config
-    )
-
-    # Parse the JSON output from the agent
-    content = result["messages"][-1].content
-    try:
-        # We strip potential markdown code blocks if the LLM includes them
-        clean_json = content.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_json)
-        
-        return {
-            "policy_grade": data.get("grade", "FAIL"),
-            "policy_feedback": data.get("feedback", "")
-        }
-    except Exception as e:
-        # If parsing fails, we default to FAIL to be safe
-        return {
-            "policy_grade": "FAIL",
-            "policy_feedback": f"System Error: Could not parse QA output. Raw output: {content}"
-        }
-
-# ==========================================
-# 4. TEST SCRIPT (The Hallucination Catch)
-# ==========================================
-if __name__ == "__main__":
-    print("--- TESTING POLICY CHECKER (Catching a Hallucination) ---")
-
-    # Scenario: The Researcher said NO REFUND, but a "too helpful" Drafter promised one anyway.
-    mock_facts = "Policy: All sales for Christ the Redeemer are final. No cash refunds. Credit only."
-    hallucinated_draft = "I understand you can't make it! I've gone ahead and processed a full refund to your credit card."
-
-    test_state: UDAHubState = {
-        "research_facts": mock_facts,
-        "ai_response": hallucinated_draft,
-        "policy_grade": None,
-        "policy_feedback": None
+    return {
+        "policy_grade": data.grade,
+        "policy_feedback": data.feedback if data.grade == "FAIL" else None,
     }
 
-    result = policy_checker_node(test_state)
 
-    print(f"Grade:    {result['policy_grade']}")
-    print(f"Feedback: {result['policy_feedback']}")
+if __name__ == "__main__":
+    print("🛡️ --- Running Policy Checker (Auditor) Tests ---\n" + "="*60)
+
+    # TEST 1: The "Perfect" Draft (Should PASS)
+    state_pass: UDAHubState = {
+        "ticket_text": "I want a refund for my yoga session.",
+        "research_facts": "POLICY: Refunds only allowed 24h before session. USER DATA: Alice booked Yoga at 5pm tomorrow.",
+        "ai_response": "Hi Alice, I see your Yoga session is tomorrow at 5pm. Since that's more than 24h away, I can process that refund for you!",
+        "customer_tier": "regular"
+    }
+
+    # TEST 2: The "Liar" Draft (Should FAIL - Hallucination)
+    # Researcher says NO refund, but Drafter says YES.
+    state_hallucination: UDAHubState = {
+        "ticket_text": "Refund for my missed class.",
+        "research_facts": "POLICY: No refunds for missed classes. USER DATA: Class was yesterday.",
+        "ai_response": "I'm so sorry you missed it! I've gone ahead and issued a full refund to your card.",
+        "customer_tier": "regular"
+    }
+
+    # TEST 3: The "Leaky" Draft (Should FAIL - Security)
+    # Draft includes internal database IDs.
+    state_security: UDAHubState = {
+        "ticket_text": "What is my account status?",
+        "research_facts": "USER: Frank Ocean, ID: e6376d, Tier: Premium.",
+        "ai_response": "Hello Frank, your internal system ID is e6376d and you are a Premium member.",
+        "customer_tier": "premium"
+    }
+
+    # TEST 4: The "VIP Pretender" (Should FAIL - Tier Compliance)
+    # Draft offers VIP perks to a regular user.
+    state_tier_mismatch: UDAHubState = {
+        "ticket_text": "Can I get lounge access?",
+        "research_facts": "POLICY: Lounge is for VIP only. USER: Bob is 'regular' tier.",
+        "ai_response": "Hey Bob! As a valued member, I've granted you one-time access to the VIP lounge.",
+        "customer_tier": "regular"
+    }
+
+    tests = [
+        ("Test 1 (Valid)", state_pass),
+        ("Test 2 (Hallucination)", state_hallucination),
+        ("Test 3 (Security Leak)", state_security),
+        ("Test 4 (Tier Violation)", state_tier_mismatch)
+    ]
+
+    for name, state in tests:
+        print(f"\n▶️ {name}")
+        result = policy_checker_node(state)
+        grade = result.get("policy_grade")
+        feedback = result.get("policy_feedback")
+        
+        color = "✅" if grade == "PASS" else "❌"
+        print(f"Result: {color} {grade}")
+        if feedback:
+            print(f"Feedback: {feedback}")
     
-    # Expected: FAIL - because the draft contradicts the "No cash refunds" fact.
+    print("\n" + "="*60 + "\n✅ Policy Audit Suite Complete")

@@ -21,10 +21,11 @@ llm = ChatOpenAI(
     api_key=os.getenv("VOCAREUM_API_KEY"),
 )
 
+# https://github.com/Ohara124c41/agentic_ai_langchain_langgraph/tree/main/autonomous_knowledge_agent/solution
 
 archivist_agent = create_agent(
     name="archivist_agent",
-    model=llm,  
+    model=llm,
     tools=ARCHIVIST_TOOLS,
     system_prompt=(
         "You are the UDA-Hub Archivist. Your job is to document the final outcome of a ticket.\n"
@@ -36,37 +37,125 @@ archivist_agent = create_agent(
 
 
 def archivist_node(state: UDAHubState):
-    # Generate a unique ticket ID if one doesn't exist in the state
+    """
+    Identity-aware Archivist: Only triggers the agent if a user_id exists.
+    """
+    user_id = state.get("user_id")
+
+    # 1. THE IDENTITY GATE: No ID, No Archive
+    if not user_id:
+        print("⏸️ Archivist: Bypassing archive (Anonymous session).")
+        return {"archive_summary": "Skipped: User is anonymous."}
+
+    # 2. Setup ID and Context
+    # We use the user_id to ensure the ticket is linked correctly in the DB
     ticket_id = (
-        state.get("ticket_id")
-        or f"TICK_{state.get('user_id')}_{int(datetime.now().timestamp())}"
+        state.get("ticket_id") or f"TICK_{user_id}_{int(datetime.now().timestamp())}"
     )
 
-    config = {"configurable": {"thread_id": f"archive_{ticket_id}"}}
-
-    # The Archivist looks at the ticket_text, category, and the final ai_response
+    # We give the agent the "Anchor" and the "Resolution" so the summary is accurate
     context = (
+        f"--- TICKET DETAILS ---\n"
         f"Ticket ID: {ticket_id}\n"
-        f"Category: {state.get('category')}\n"
-        f"Final Resolution: {state.get('ai_response')}"
+        f"Original Request (Anchor): {state.get('ticket_text')}\n"
+        f"Final Category: {state.get('category')}\n"
+        f"Final Resolution Provided: {state.get('ai_response')}\n"
+        f"--- FULL HISTORY ---\n"
+        f"{state.get('messages')}"
     )
 
+    # 3. Invoke the Agent
+    config = {"configurable": {"thread_id": f"archive_{ticket_id}"}}
     result = archivist_agent.invoke({"messages": [("user", context)]}, config)
 
-    return {"archive_summary": result["messages"][-1].content}
+    # 4. Return the summary for the state
+    return {
+        "archive_summary": result["messages"][-1].content,
+        "ticket_id": ticket_id,  # Ensure the ticket_id persists in the state
+    }
 
+
+from datetime import datetime
 
 if __name__ == "__main__":
-    print("--- TESTING ARCHIVIST AGENT ---")
+    print("🗄️ --- TESTING ARCHIVIST AGENT & IDENTITY GATE ---")
+    print("=" * 60)
 
-    test_state: UDAHubState = {
+    # ---------------------------------------------------------
+    # TEST 1: The "Success Path" (Authenticated User)
+    # ---------------------------------------------------------
+    state_authenticated: UDAHubState = {
         "ticket_text": "I can't attend the Samba Night, can I get a refund?",
         "user_id": "a4ab87",
         "category": "billing",
-        "ai_response": "I have processed a credit to your account as per our policy since you cannot attend.",
+        "ai_response": "I have processed a partial credit to your account since the Samba Night is tonight.",
+        "messages": [
+            {
+                "role": "user",
+                "content": "I can't attend the Samba Night, can I get a refund?",
+            },
+            {
+                "role": "assistant",
+                "content": "I have processed a partial credit to your account since the Samba Night is tonight.",
+            },
+        ],
         "archive_summary": None,
     }
 
-    # Run node
-    output = archivist_node(test_state)
-    print(f"\nArchivist Result: {output['archive_summary']}")
+    # ---------------------------------------------------------
+    # TEST 2: The "Identity Gate" (Anonymous User)
+    # ---------------------------------------------------------
+    state_anonymous: UDAHubState = {
+        "ticket_text": "How do I sign up for a premium membership?",
+        "user_id": None,  # Should trigger the bypass
+        "category": "general_inquiry",
+        "ai_response": "You can sign up via the 'Profile' tab in the app!",
+        "archive_summary": None,
+    }
+
+    # ---------------------------------------------------------
+    # TEST 3: The "Complex Escalation" (Verification of Tags)
+    # ---------------------------------------------------------
+    state_escalated: UDAHubState = {
+        "ticket_text": "My payment failed three times and I'm being double charged!",
+        "user_id": "vip_user_99",
+        "category": "billing",
+        "ai_response": "I see the duplicate charge. I'm escalating this to our finance lead immediately.",
+        "status": "pending_human",
+        "messages": [
+            {"role": "user", "content": "I'm being double charged!"},
+            {
+                "role": "assistant",
+                "content": "I'm escalating this to our finance lead immediately.",
+            },
+        ],
+        "archive_summary": None,
+    }
+
+    test_scenarios = [
+        ("AUTHENTICATED SUCCESS", state_authenticated),
+        ("ANONYMOUS BYPASS", state_anonymous),
+        ("VIP ESCALATION", state_escalated),
+    ]
+
+    for name, state in test_scenarios:
+        print(f"\n▶️ SCENARIO: {name}")
+        print("-" * 30)
+
+        try:
+            output = archivist_node(state)
+
+            # Check if it was a skip or a save
+            summary = output.get("archive_summary", "N/A")
+            if "Skipped" in summary:
+                print(f"Status: ⏸️ Logic Bypassed")
+            else:
+                print(f"Status: ✅ Successfully Processed")
+
+            print(f"Agent Output: {summary}")
+
+        except Exception as e:
+            print(f"❌ Test Failed with error: {e}")
+
+    print("\n" + "=" * 60)
+    print("🏁 ARCHIVIST SUITE COMPLETE")

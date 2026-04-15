@@ -1,10 +1,13 @@
+import os
 from typing import Literal
+from datetime import datetime
 from dotenv import load_dotenv
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
-
 from langchain_core.messages import HumanMessage
+
+# Import existing state and nodes
 from uda_hub.agentic.tools.udahub_state import UDAHubState
 from uda_hub.agentic.agents.request_enricher import data_enricher_node
 from uda_hub.agentic.agents.classifier import classifier_node
@@ -14,29 +17,15 @@ from uda_hub.agentic.agents.policy_checker import policy_checker_node
 from uda_hub.agentic.agents.archivist import archivist_node
 from uda_hub.agentic.agents.clarificator import clarification_node
 from uda_hub.agentic.agents.escalator import escalation_node
+from uda_hub.agentic.agents.supervisor import supervisor_router
+from uda_hub.agentic.agents.greater import greeter_node
+from uda_hub.agentic.agents.closure_node import closer_node
 
 load_dotenv()
 
-
-def supervisor_router(
-    state: UDAHubState,
-) -> Literal["researcher", "escalate", "clarify"]:
-    """
-    Determines if we have enough data to proceed or if we need a human/more info.
-    """
-    category = state.get("category")
-    urgency = state.get("urgency")
-    user_id = state.get("user_id")
-
-    # If it's a critical issue or VIP, bypass automation
-    if urgency == "high":
-        return "escalate"
-
-    # If we are missing identity for a specific account issue
-    if not user_id and category in ["billing", "technical_issue"]:
-        return "clarify"
-
-    return "researcher"
+# ==========================================
+# 1. ROUTING & BRIDGE LOGIC
+# ==========================================
 
 
 def qa_router(state: UDAHubState) -> Literal["drafter", "archivist"]:
@@ -50,26 +39,33 @@ def qa_router(state: UDAHubState) -> Literal["drafter", "archivist"]:
 
 def entry_bridge_node(state: UDAHubState):
     """
-    Extracts the latest message from the history to populate the internal
-    processing state.
+    Prepares the state for a new turn.
+    Clears temporary decision fields while preserving the conversation history.
     """
-    # Grab the content of the very last message from the chat UI
-    latest_input = state["messages"][-1].content
+    messages = state.get("messages", [])
+    latest_input = messages[-1].content if messages else ""
 
-    # We return the updates to our custom state keys
     return {
-        "ticket_text": latest_input,
-        # We can also clear previous turn facts to ensure fresh research
-        "research_facts": None,
+        "latest_input": latest_input,
+        "research_facts": None,  # Reset for new research pass
+        "policy_grade": None,  # Clear previous audit
+        "policy_feedback": None,  # Clear previous feedback
+        "ai_response": None,  # Clear previous draft
     }
 
 
+# ==========================================
+# 2. GRAPH DEFINITION
+# ==========================================
+
 workflow = StateGraph(UDAHubState)
 
-# Add every single agent as a node
+# Add Nodes
 workflow.add_node("entry_bridge", entry_bridge_node)
 workflow.add_node("enricher", data_enricher_node)
 workflow.add_node("classifier", classifier_node)
+workflow.add_node("greeter", greeter_node)
+workflow.add_node("closer", closer_node)
 workflow.add_node("clarifier", clarification_node)
 workflow.add_node("escalator", escalation_node)
 workflow.add_node("researcher", researcher_node)
@@ -78,22 +74,26 @@ workflow.add_node("policy_checker", policy_checker_node)
 workflow.add_node("archivist", archivist_node)
 
 # --- Define the Connections ---
+
+# Initial Pipeline
 workflow.add_edge(START, "entry_bridge")
 workflow.add_edge("entry_bridge", "enricher")
 workflow.add_edge("enricher", "classifier")
 
-# The Supervisor decides the path
+# Supervisor Decision (Inbound Traffic)
 workflow.add_conditional_edges(
     "classifier",
     supervisor_router,
-    {"researcher": "researcher", "escalator": "escalator", "clarifier": "clarifier"},
+    {
+        "greeter": "greeter",
+        "closer": "closer",
+        "researcher": "researcher",
+        "escalator": "escalator",
+        "clarifier": "clarifier",
+    },
 )
 
-# Terminal Paths for non-automated issues
-workflow.add_edge("clarifier", END)
-workflow.add_edge("escalator", END)
-
-# The Main Automation Loop
+# Automation & Quality Loop
 workflow.add_edge("researcher", "drafter")
 workflow.add_edge("drafter", "policy_checker")
 
@@ -101,77 +101,79 @@ workflow.add_conditional_edges(
     "policy_checker", qa_router, {"drafter": "drafter", "archivist": "archivist"}
 )
 
+# All terminal paths flow to Archivist to persist authenticated data
+workflow.add_edge("greeter", "archivist")
+workflow.add_edge("closer", "archivist")
+workflow.add_edge("clarifier", "archivist")
+workflow.add_edge("escalator", "archivist")
+
+# The Final Finish
 workflow.add_edge("archivist", END)
 
-# 4. Compile
+# ==========================================
+# 3. COMPILATION & EXPORT
+# ==========================================
+
 memory = MemorySaver()
 app = workflow.compile(checkpointer=memory)
 
-# Activate only when there is a need to generate the workflow diagram (e.g. after edits to the graph structure)
-# # Extract the binary data from the graph
-# png_data = app.get_graph().draw_mermaid_png()
+# Optional: Generate visualization
+# try:
+#     png_data = app.get_graph().draw_mermaid_png()
+#     with open("uda_hub_workflow.png", "wb") as f:
+#         f.write(png_data)
+#     print("🎨 Workflow diagram updated: 'uda_hub_workflow.png'")
+# except Exception:
+#     print("⚠️  Could not generate diagram (pygraphviz/mermaid issues), skipping...")
 
-# # Save to the current directory
-# with open("uda_hub_workflow.png", "wb") as f:
-#     f.write(png_data)
-
-print("Workflow diagram saved as 'uda_hub_workflow.png'")
-
-
-# Memory keeps track of the conversation threads
-memory = MemorySaver()
-app = workflow.compile(checkpointer=memory)
-
+# ==========================================
+# 4. INTEGRATION TEST
+# ==========================================
 
 if __name__ == "__main__":
-    print("🚀 Starting UDA-Hub End-to-End Integration Test\n" + "=" * 50)
+    print("\n🚀 Starting UDA-Hub End-to-End Integration Test\n" + "=" * 50)
 
     initial_state = {
         "messages": [
-            HumanMessage(content="I can't attend my Christ the Redeemer booking. Refund?")
-        ],
-        "user_email": "alice.kingsley@wonderland.com",
+            HumanMessage(
+                content="I can't attend my Christ the Redeemer booking. Refund?. My email is alice.kingsley@wonderland.com."
+            )
+        ]
     }
 
-    config = {"configurable": {"thread_id": "test_run_alice_001"}}
+    config = {
+        "configurable": {"thread_id": f"test_{datetime.now().strftime('%Y%m%d_%H%M')}"}
+    }
 
-    # We use stream to observe the 'Assembly Line' in action
     for event in app.stream(initial_state, config):
         for node, values in event.items():
-            print(f"\n📍 NODE EXECUTED: {node}")
-            print("-" * 30)
+            print(f"\n📍 NODE: {node}")
 
-            # 1. Show Identity Enrichment
-            if "user_id" in values:
+            # Identity Check
+            if "user_id" in values and values["user_id"]:
                 print(
-                    f"👤 User Identified: {values.get('user_id')} ({values.get('customer_tier')} tier)"
+                    f"👤 Identity: {values['user_id']} | Tier: {values.get('customer_tier')}"
                 )
 
-            # 2. Show Intent Classification
+            # Intent Check
             if "category" in values:
-                print(
-                    f"🏷️  Classification: {values.get('category').upper()} | Urgency: {values.get('urgency')}"
-                )
+                print(f"🏷️  Intent: {values['category'].upper()}")
 
-            # 3. Show Research Discoveries
+            # Research Facts
             if "research_facts" in values and values["research_facts"]:
-                print(f"🔍 Knowledge Retrieved:\n{values['research_facts']}")
+                print(f"🔍 Facts: {values['research_facts']}...")
 
-            # 4. Show Draft & Policy Loop
+            # Response & QA Loop
             if "ai_response" in values:
-                # If there's a policy grade, it means we just passed the QA node
                 grade = values.get("policy_grade", "PENDING")
-                print(f"📝 Drafted Response (QA Status: {grade})")
-
-                if grade == "FAIL":
-                    print(f"⚠️  POLICY VIOLATION: {values.get('policy_feedback')}")
-                    print("🔄 Routing back to Drafter for correction...")
+                print(f"📝 Draft Status: {grade}")
+                if values.get("policy_feedback"):
+                    print(f"⚠️  Feedback: {values['policy_feedback']}")
                 else:
-                    # Print a snippet of the successful response
-                    print(f"📩 Final Email Preview: {values['ai_response']}")
+                    print(f"📩 Message: {values['ai_response']}...")
 
-            # 5. Show Final Archiving
+            # Archive Result
             if "archive_summary" in values:
-                print(f"🗄️  Archived Summary: {values['archive_summary']}")
+                print(f"🗄️  Archived: {values['archive_summary']}")
 
-    print("\n" + "=" * 50 + "\n✅ Test Sequence Complete")
+    print("\n" + "=" * 50 + "\n✅ Integration Test Complete")

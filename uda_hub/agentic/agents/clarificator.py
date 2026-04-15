@@ -19,39 +19,43 @@ llm = ChatOpenAI(
 
 def clarification_node(state: UDAHubState) -> dict:
     """
-    Drafts a polite message asking the user for missing information (like an email).
-    Ensures the chat interface can display the message via the messages key.
+    An 'Identity Specialist' node that analyzes the full history
+    to ask for the most appropriate missing identifier.
     """
-    category = state.get("category", "general issue")
-    ticket_text = state.get("ticket_text", "")
+    # 1. Pull the full context
+    messages = state.get("messages", [])
+    ticket_text = state.get("ticket_text", "an issue")
 
-    # Focused prompt for identity recovery
+    # 2. Dynamic Prompt for identity recovery
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                "You are the friendly 'Front Desk' intake agent for CultPass support. "
-                "A customer has reached out, but we cannot find their account in our database. "
-                "Your ONLY job is to acknowledge their issue and politely ask them to provide "
-                "the email address associated with their account so we can look it up. "
-                "Keep it brief (1-2 sentences). Do NOT try to solve their problem.",
+                "You are the UDA-Hub Identity Specialist. Your goal is to help find the customer's account.\n\n"
+                "INSTRUCTIONS:\n"
+                "1. Analyze the conversation history. See if the user already provided an identifier.\n"
+                "2. If they provided an email but the system still didn't find them, ask for a Membership ID or Phone Number instead.\n"
+                "3. If they haven't provided anything, ask for their Email OR Membership ID.\n"
+                "4. ACKNOWLEDGE their specific problem (found in the 'User's Issue') so they know we are listening.\n"
+                "5. Keep it to 2 empathetic sentences. Do NOT try to solve the technical issue yet.",
             ),
-            ("human", "Category: {category}\nUser's Message: {ticket_text}"),
+            # Passing the actual messages list so the LLM sees the history
+            *messages,
+            ("human", f"User's Issue: {ticket_text}"),
         ]
     )
 
-    # Note: 'llm' must be defined in your file or imported
     chain = prompt | llm
 
-    response = chain.invoke({"category": category, "ticket_text": ticket_text})
-
-    # Extract the string content from the LLM response
+    # We don't need to pass category/text separately if they are in history,
+    # but providing 'ticket_text' specifically helps the 'Acknowledge' instruction.
+    response = chain.invoke({})
     response_text = response.content
 
-    # Return the drafted message to our internal state and the message list for the UI
     return {
         "ai_response": response_text,
         "messages": [AIMessage(content=response_text)],
+        "status": "pending_user",  # Signal that we are waiting for user input
     }
 
 

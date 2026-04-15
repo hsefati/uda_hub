@@ -49,33 +49,43 @@ researcher_agent = create_agent_wrapper(
     model=llm,
     tools=RESEARCHER_TOOLS,
     system_prompt=(
-        "You are the UDA-Hub Researcher Agent. Your job is to find factual truth.\n"
-        "1. Use tools to query the provided databases.\n"
-        "2. DO NOT write a response to the customer.\n"
-        "3. Output ONLY a bulleted list of facts found (e.g., booking status, refund policy).\n"
-        "If information is missing after tool usage, state what is missing."
+        "You are the UDA-Hub Researcher Agent. Your mission is to find factual truth using provided tools.\n"
+        "1. Focus strictly on the 'Anchored Ticket' provided in the input.\n"
+        "2. Query 'udahub.db' for policies in the knowledge table (title, content).\n"
+        "3. Query 'cultpass.db' to verify user reservations (join reservations and experiences tables).\n"
+        "4. DO NOT reply to the customer. Output a bulleted list of facts found.\n"
+        "5. If a user_id is provided, verify their tier and booking status[cite: 582]."
     ),
 )
 
 
 def researcher_node(state: UDAHubState):
-    config = {"configurable": {"thread_id": state.get("user_id", "default_thread")}}
+    """
+    Orchestrates the Researcher Agent. It passes the Anchor (ticket_text)
+    and User Context (user_id/tier) to the agent.
+    """
+    # Use the Anchored ticket_text, not the raw chat history
+    anchor = state.get("ticket_text")
+    user_id = state.get("user_id")
+    tier = state.get("customer_tier", "regular")
 
-    # Run the agent (must pass the messages array explicitly for create_react_agent)
-    # The agent expects a list of messages as input, so we convert the ticket text into a human message
-    result = researcher_agent.invoke(
-        {
-            "messages": [
-                (
-                    "user",
-                    f"Ticket: {state.get('ticket_text')}\nUser ID: {state.get('user_id')}",
-                )
-            ]
-        },
-        config,
+    # Construction of the agent's task
+    prompt_task = (
+        f"ANCHORED TICKET: {anchor}\n"
+        f"USER CONTEXT: ID={user_id}, Tier={tier}\n\n"
+        "Please find the relevant policies and verify any associated bookings."
     )
 
-    # Grab the last message from the agent's internal list
+    # We use the existing thread_id for consistency across the sub-agent call
+    config = {
+        "configurable": {"thread_id": state.get("user_id", "internal_research_turn")}
+    }
+
+    # Execute the agent
+    # Note: We pass the task as a human message to the ReAct agent
+    result = researcher_agent.invoke({"messages": [("user", prompt_task)]}, config)
+
+    # Return the findings to the 'research_facts' key in the UDAHubState
     return {"research_facts": result["messages"][-1].content}
 
 

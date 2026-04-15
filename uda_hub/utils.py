@@ -48,27 +48,64 @@ def model_to_dict(instance):
         for column in instance.__table__.columns
     }
 
-def chat_interface(agent:CompiledStateGraph, ticket_id:str):
-    is_first_iteration = False
-    messages = [SystemMessage(content = f"ThreadId: {ticket_id}")]
+# def chat_interface(agent:CompiledStateGraph, ticket_id:str):
+#     is_first_iteration = False
+#     messages = [SystemMessage(content = f"ThreadId: {ticket_id}")]
+#     while True:
+#         user_input = input("User: ")
+#         print("User:", user_input)
+#         if user_input.lower() in ["quit", "exit", "q"]:
+#             print("Assistant: Goodbye!")
+#             break
+#         messages = [HumanMessage(content=user_input)]
+#         if is_first_iteration:
+#             messages.append(HumanMessage(content=user_input))
+#         trigger = {
+#             "messages": messages
+#         }
+#         config = {
+#             "configurable": {
+#                 "thread_id": ticket_id,
+#             }
+#         }
+        
+#         result = agent.invoke(input=trigger, config=config)
+#         print("Assistant:", result["messages"][-1].content)
+#         is_first_iteration = False
+
+dchat_interface(agent: CompiledStateGraph, ticket_id: str):
+    print(f"--- Session Started (Thread: {ticket_id}) ---")
+    
+    # Optional: Send an initial setup if it's a brand new thread
+    # Otherwise, just start the loop.
+    
     while True:
         user_input = input("User: ")
-        print("User:", user_input)
+        
         if user_input.lower() in ["quit", "exit", "q"]:
             print("Assistant: Goodbye!")
             break
-        messages = [HumanMessage(content=user_input)]
-        if is_first_iteration:
-            messages.append(HumanMessage(content=user_input))
+
+        # 1. We only send the LATEST message. 
+        # LangGraph's 'add_messages' reducer will append this to the history.
         trigger = {
-            "messages": messages
+            "messages": [HumanMessage(content=user_input)]
         }
+        
         config = {
             "configurable": {
                 "thread_id": ticket_id,
             }
         }
         
+        # 2. Invoke the agent
         result = agent.invoke(input=trigger, config=config)
-        print("Assistant:", result["messages"][-1].content)
-        is_first_iteration = False
+        
+        # 3. Access the last message in the updated state
+        # Because result['messages'] contains the WHOLE history now, 
+        # index -1 is the AI's latest response.
+        if "messages" in result and result["messages"]:
+            print("Assistant:", result["messages"][-1].content)
+        else:
+            # Fallback if your graph returned ai_response but didn't update messages
+            print("Assistant:", result.get("ai_response", "I'm processing your request."))
