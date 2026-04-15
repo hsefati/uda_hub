@@ -1,5 +1,6 @@
 from typing import Literal
 from uda_hub.agentic.tools.udahub_state import UDAHubState
+from uda_hub.agentic.tools.logging import node_log
 
 
 # 2. The Supervisor Routing Function
@@ -22,38 +23,52 @@ def supervisor_router(
 
     # --- THE HIJACK PROTECTION (Priority 1) ---
     if category == "greeting" and not anchor:
-        return "greeter"
+        route = "greeter"
+        node_log("supervisor", route=route, reason="greeting_no_anchor")
+        return route
 
     # --- THE SECURITY/URGENCY GATE (Priority 2) ---
     if urgency == "high" or confidence < 0.75:
-        return "escalator"
+        route = "escalator"
+        node_log("supervisor", route=route, reason="urgency_or_low_confidence")
+        return route
 
     # --- THE HISTORY GATE (Priority 3) - NEW ---
     # If the Historian detected a similar ticket in the durable database,
     # we follow the 'Gatekeeper' recommendation before proceeding.
     if suggested_action == "escalate":
         print("🚨 History Check: High-risk repeat issue. Forcing Escalation.")
-        return "escalator"
+        route = "escalator"
+        node_log("supervisor", route=route, reason="history_escalate")
+        return route
 
     if suggested_action == "clarify" or is_recurring:
         # This is where we 'do nothing first'—we pause to ask the user
         # if this is a repeat of their previous ticket.
         print(f"🚨 History Check: Duplicate detected. Routing to Clarifier.")
-        return "clarifier"
+        route = "clarifier"
+        node_log("supervisor", route=route, reason="history_clarify_or_recurring")
+        return route
 
     # --- THE IDENTITY GATE (Priority 4) ---
     requires_auth = ["billing", "account_management", "technical_issue"]
     if not user_id:
         if category in requires_auth or anchor:
-            return "clarifier"
+            route = "clarifier"
+            node_log("supervisor", route=route, reason="requires_auth_missing_user")
+            return route
 
     # --- THE SATISFACTION GATE (Priority 5) ---
     if category == "satisfaction":
-        return "closer"
+        route = "closer"
+        node_log("supervisor", route=route, reason="satisfaction_closure")
+        return route
 
     # --- THE AUTOMATION PATH (Default) ---
     # We have an anchor, an ID, and no history blockers.
-    return "researcher"
+    route = "researcher"
+    node_log("supervisor", route=route, reason="automation_default")
+    return route
 
 
 if __name__ == "__main__":

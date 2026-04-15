@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
 from uda_hub.agentic.tools.udahub_state import UDAHubState
 from langchain_core.messages import HumanMessage
+from uda_hub.agentic.tools.logging import node_log
 
 load_dotenv()
 
@@ -77,12 +78,22 @@ def escalation_node(state: UDAHubState) -> dict:
         f"one of our human experts. They will be with you shortly!"
     )
 
-    return {
+    out = {
         "handoff_summary": internal_note,
         "ai_response": public_msg,
         "messages": [AIMessage(content=public_msg)],
         "status": "pending_human",
     }
+
+    node_log(
+        "escalator",
+        retrieval_confidence=retrieval_conf,
+        handoff_summary=internal_note[:120] if internal_note else None,
+        status=out.get("status"),
+    )
+
+    return out
+
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage
 from langchain.agents import create_agent
 from uda_hub.agentic.tools.udahub_state import UDAHubState
 from langchain_core.messages import HumanMessage
+from uda_hub.agentic.tools.logging import node_log
 
 load_dotenv()
 
@@ -84,12 +85,20 @@ def drafter_node(state: UDAHubState):
 
     response_text = result["messages"][-1].content
 
-    return {
+    out = {
         "ai_response": response_text,
         # We append the AI's final answer to the history
         "messages": [AIMessage(content=response_text)],
         "policy_feedback": None,
     }
+
+    node_log(
+        "drafter",
+        ai_response_present=bool(out.get("ai_response")),
+        policy_feedback=out.get("policy_feedback"),
+    )
+
+    return out
 
 
 if __name__ == "__main__":

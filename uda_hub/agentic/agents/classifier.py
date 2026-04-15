@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from uda_hub.agentic.tools.udahub_state import UDAHubState
+from uda_hub.agentic.tools.logging import node_log
 
 load_dotenv()
 
@@ -21,13 +22,12 @@ llm = ChatOpenAI(
 class TicketClassification(BaseModel):
     category: str = Field(
         ...,
-        description="Categories: billing, technical_issue, account_management, general_inquiry, greeting, closure",
+        description="Categories: billing, technical_issue, account_management, general_inquiry",
         json_schema_extra=[
             "billing",
             "technical_issue",
             "account_management",
             "general_inquiry",
-            "greeting",
         ],
     )
     urgency: str = Field(
@@ -58,8 +58,6 @@ def classifier_node(state: UDAHubState) -> dict:
                 "You are the Triage Classifier for UDA-Hub. Your goal is to determine the intent "
                 "of the LATEST INPUT while considering the CONVERSATION HISTORY.\n\n"
                 "Categories:\n"
-                "- 'greeting': Only for fresh hellos with NO prior context.\n"
-                "- 'closure': Indication that the user wants to end the conversation or the problem is now resolved.\n"
                 "- 'billing': Money, refunds, or payment issues.\n"
                 "- 'technical_issue': Site bugs or login errors.\n"
                 "- 'account_management': Providing identification (email, name, ID) or profile updates.\n"
@@ -99,6 +97,14 @@ def classifier_node(state: UDAHubState) -> dict:
         updates["ticket_text"] = latest_input
     else:
         updates["ticket_text"] = existing_ticket
+
+    # Structured log for audit
+    node_log(
+        "classifier",
+        category=updates.get("category"),
+        urgency=updates.get("urgency"),
+        confidence=updates.get("confidence_score"),
+    )
 
     return updates
 

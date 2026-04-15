@@ -8,6 +8,7 @@ from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 from uda_hub.agentic.tools.udahub_state import UDAHubState
 from uda_hub.agentic.tools.tools import ARCHIVIST_TOOLS
+from uda_hub.agentic.tools.logging import node_log
 
 load_dotenv()
 
@@ -62,13 +63,21 @@ def archivist_node(state: UDAHubState):
 
     # 3. Invoke the Agent
     # config = {"configurable": {"thread_id": f"archive_{ticket_id}"}}
-    result = archivist_agent.invoke({"messages": [("user", context)]}, config)
+    result = archivist_agent.invoke({"messages": [("user", context)]})
 
     # 4. Return the summary for the state
-    return {
+    out = {
         "archive_summary": result["messages"][-1].content,
         "ticket_id": ticket_id,  # Ensure the ticket_id persists in the state
     }
+
+    node_log(
+        "archivist",
+        ticket_id=out.get("ticket_id"),
+        archived=bool(out.get("archive_summary")),
+    )
+
+    return out
 
 
 if __name__ == "__main__":

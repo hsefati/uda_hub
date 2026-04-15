@@ -1,6 +1,28 @@
 import datetime
 import sqlite3
+from pathlib import Path
 from langchain_core.tools import tool
+
+
+def _get_db_path(db_name: str) -> str:
+    """
+    Resolve database paths dynamically regardless of execution context.
+    Works from notebook, workflow.py, or direct script execution.
+    
+    Args:
+        db_name: Either 'udahub' or 'cultpass'
+    """
+    current_file = Path(__file__).resolve()
+    project_root = current_file.parent.parent.parent.parent
+    
+    if db_name == "udahub":
+        db_path = project_root / "uda_hub" / "data" / "core" / "udahub.db"
+    elif db_name == "cultpass":
+        db_path = project_root / "uda_hub" / "data" / "external" / "cultpass.db"
+    else:
+        raise ValueError(f"Unknown database: {db_name}")
+    
+    return str(db_path)
 
 
 @tool
@@ -11,7 +33,7 @@ def search_knowledge_base(query: str) -> str:
     Do NOT use full phrases like "refund policy for events" or the database will fail to match.
     """
     try:
-        conn = sqlite3.connect("uda_hub/data/core/udahub.db")
+        conn = sqlite3.connect(_get_db_path("udahub"))
         cursor = conn.cursor()
 
         # Using a LIKE search. The LLM is now instructed to pass single words.
@@ -37,7 +59,7 @@ def check_reservations(user_id: str) -> str:
     Use this when a user asks about an experience, a booking, or a specific event.
     """
     try:
-        conn = sqlite3.connect("uda_hub/data/external/cultpass.db")
+        conn = sqlite3.connect(_get_db_path("cultpass"))
         cursor = conn.cursor()
 
         # FIXED: Replaced r.reservation_date with r.created_at to match the actual schema
@@ -79,7 +101,7 @@ def save_ticket_summary(
     Ensures parent records exist in the 'tickets' table first.
     """
     try:
-        conn = sqlite3.connect("uda_hub/data/core/udahub.db")
+        conn = sqlite3.connect(_get_db_path("udahub"))
         cursor = conn.cursor()
 
         # 1. Ensure the ticket exists in the parent 'tickets' table
@@ -145,7 +167,7 @@ def lookup_user_history(user_id: str):
     Retrieves a summary of the user's past 3 closed support tickets.
     Use this to identify recurring issues or existing preferences based on durable memory.
     """
-    conn = sqlite3.connect("uda_hub/data/core/udahub.db")
+    conn = sqlite3.connect(_get_db_path("udahub"))
     cursor = conn.cursor()
 
     # We join tickets, metadata, and messages to get the full story

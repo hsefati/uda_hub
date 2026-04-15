@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage
 from uda_hub.agentic.tools.udahub_state import UDAHubState
 from langchain_core.messages import HumanMessage
 from langchain.agents import create_agent
+from uda_hub.agentic.tools.logging import node_log
 
 load_dotenv()
 
@@ -76,11 +77,19 @@ def clarificator_node(state: UDAHubState):
     # Invoke the agent
     result = clarifier_agent.invoke({"messages": [("user", prompt_task)]})
 
-    return {
+    out = {
         "ai_response": result["messages"][-1].content,
         "messages": [AIMessage(content=result["messages"][-1].content)],
         "status": "pending_user",
     }
+
+    node_log(
+        "clarifier",
+        ai_response_present=bool(out.get("ai_response")),
+        status=out.get("status"),
+    )
+
+    return out
 
 
 if __name__ == "__main__":

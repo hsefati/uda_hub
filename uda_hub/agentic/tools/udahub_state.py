@@ -45,3 +45,5 @@ class UDAHubState(TypedDict):
     archive_summary: Optional[str]
     handoff_summary: Optional[str]
     status: Optional[str]  # 'in_progress', 'pending_human', 'closed'
+    
+    triage_intent: Optional[str]

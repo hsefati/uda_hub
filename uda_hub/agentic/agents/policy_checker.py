@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 from uda_hub.agentic.tools.udahub_state import UDAHubState
+from uda_hub.agentic.tools.logging import node_log
 
 load_dotenv()
 
@@ -61,22 +62,22 @@ structured_llm = llm.with_structured_output(PolicyGrade)
 qa_chain = qa_prompt_template | structured_llm
 
 # We use a system prompt that enforces a JSON output structure
-policy_checker_agent = create_agent(
-    model=structured_llm,
-    tools=[],
-    system_prompt=(
-        "You are the UDA-Hub Quality Auditor. Your job is to audit the drafted response.\n\n"
-        "STRICT AUDIT CRITERIA:\n"
-        "1. ANCHOR ALIGNMENT: Does the email address the 'Anchored Ticket Goal'? If the goal was a refund, did they discuss the refund?\n"
-        "2. FACTUAL TRUTH: Compare the 'Proposed Email' against the 'Research Facts'. \n"
-        "   - If facts say 'No Refund', the email MUST NOT promise a refund.\n"
-        "   - If facts say 'Experience is at 5 PM', the email MUST NOT say 6 PM.\n"
-        "3. TIER COMPLIANCE: Ensure 'Premium' perks aren't offered to 'Basic' users.\n"
-        "4. NO INTERNAL LEAKS: Ensure no internal user IDs or raw database rows are in the draft.\n\n"
-        "If ANY criteria are failed, set grade to 'FAIL' and provide specific 'Fix-it' instructions."
-    ),
-    name="policy_checker",
-)
+# policy_checker_agent = create_agent(
+#     model=structured_llm,
+#     tools=[],
+#     system_prompt=(
+#         "You are the UDA-Hub Quality Auditor. Your job is to audit the drafted response.\n\n"
+#         "STRICT AUDIT CRITERIA:\n"
+#         "1. ANCHOR ALIGNMENT: Does the email address the 'Anchored Ticket Goal'? If the goal was a refund, did they discuss the refund?\n"
+#         "2. FACTUAL TRUTH: Compare the 'Proposed Email' against the 'Research Facts'. \n"
+#         "   - If facts say 'No Refund', the email MUST NOT promise a refund.\n"
+#         "   - If facts say 'Experience is at 5 PM', the email MUST NOT say 6 PM.\n"
+#         "3. TIER COMPLIANCE: Ensure 'Premium' perks aren't offered to 'Basic' users.\n"
+#         "4. NO INTERNAL LEAKS: Ensure no internal user IDs or raw database rows are in the draft.\n\n"
+#         "If ANY criteria are failed, set grade to 'FAIL' and provide specific 'Fix-it' instructions."
+#     ),
+#     name="policy_checker",
+# )
 
 
 # def policy_checker_node(state: UDAHubState):
@@ -122,10 +123,18 @@ def policy_checker_node(state: UDAHubState):
         }
     )
 
-    return {
+    out = {
         "policy_grade": data.grade,
         "policy_feedback": data.feedback if data.grade == "FAIL" else None,
     }
+
+    node_log(
+        "policy_checker",
+        policy_grade=out.get("policy_grade"),
+        policy_feedback=(out.get("policy_feedback")[:120] if out.get("policy_feedback") else None),
+    )
+
+    return out
 
 
 if __name__ == "__main__":

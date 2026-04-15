@@ -1,16 +1,31 @@
 # Assuming you have sqlalchemy or sqlite3 set up to query your DBs
 import os
 import sqlite3
+from pathlib import Path
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.prompts import ChatPromptTemplate
 from uda_hub.agentic.tools.udahub_state import UDAHubState
+from uda_hub.agentic.tools.logging import node_log
 
 from pydantic import BaseModel, Field
 from typing import Optional
 
 load_dotenv()
+
+# Dynamically resolve the project root and database path
+def _get_db_path():
+    """
+    Resolve the cultpass.db path regardless of where the script is run from.
+    Works from notebook, workflow.py, or direct script execution.
+    """
+    # Get the directory of this file (enricher.py)
+    current_file = Path(__file__).resolve()
+    # Navigate up: enricher.py -> agents -> agentic -> uda_hub -> project_root
+    project_root = current_file.parent.parent.parent.parent
+    db_path = project_root / "uda_hub" / "data" / "external" / "cultpass.db"
+    return str(db_path)
 
 
 def lookup_user_in_cultpass(email: str = None, user_id: str = None, name: str = None):
@@ -18,7 +33,8 @@ def lookup_user_in_cultpass(email: str = None, user_id: str = None, name: str = 
     Searches the CultPass database for a user's subscription and identity details.
     You can provide an email, a specific user_id, or a full name.
     """
-    conn = sqlite3.connect("uda_hub/data/external/cultpass.db")
+    db_path = _get_db_path()
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     result = None
 
@@ -108,21 +124,35 @@ def data_enricher_node(state: UDAHubState) -> dict:
     # --- STEP 3: State Update ---
     if user_data.get("found"):
         # We found them! Populate the state with verified DB values
-        return {
+        out = {
             "user_id": user_data["user_id"],
             "user_email": user_data["user_email"],
             "full_name": user_data["full_name"],
             "customer_tier": user_data["customer_tier"],
             "subscription_status": user_data["subscription_status"]
         }
+        node_log(
+            "enricher",
+            user_id=out.get("user_id"),
+            user_email=out.get("user_email"),
+            customer_tier=out.get("customer_tier"),
+        )
+        return out
 
     # If not found, we still save any mined info (like the email) 
     # so the Clarifier knows what the user tried to provide.
-    return {
+    out = {
         "user_email": mined.email or state.get("user_email"),
         "full_name": mined.name or state.get("full_name"),
         "customer_tier": "unknown"
     }
+    node_log(
+        "enricher",
+        user_email=out.get("user_email"),
+        full_name=out.get("full_name"),
+        customer_tier=out.get("customer_tier"),
+    )
+    return out
 
 
 if __name__ == "__main__":

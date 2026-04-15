@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from uda_hub.agentic.tools.tools import RESEARCHER_TOOLS
 from uda_hub.agentic.tools.udahub_state import UDAHubState
+from uda_hub.agentic.tools.logging import node_log
 
 from langchain.agents import create_agent
 
@@ -129,11 +130,21 @@ def researcher_node(state: UDAHubState):
     grade: ResearchGrade = grader_llm.invoke(grading_prompt)
 
     # --- STEP 3: RETURN STRUCTURED STATE ---
-    return {
+    out = {
         "research_facts": found_facts,
         "retrieval_confidence": grade.confidence_score,  # Numerical score for routing
         "needs_escalation": not grade.is_sufficient,  # Deterministic flag for routing
     }
+
+    # Structured logging (include optional match counts if present)
+    node_log(
+        "researcher",
+        retrieval_confidence=out.get("retrieval_confidence"),
+        kb_matches=out.get("kb_matches"),
+        reservation_matches=out.get("reservation_matches"),
+    )
+
+    return out
 
 
 if __name__ == "__main__":

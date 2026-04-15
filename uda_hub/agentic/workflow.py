@@ -1,6 +1,7 @@
 from typing import Literal
 import uuid
 from dotenv import load_dotenv
+from uda_hub.agentic.tools.logging import node_log
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -8,20 +9,20 @@ from langchain_core.messages import HumanMessage
 
 # Import existing state and nodes
 from uda_hub.agentic.tools.udahub_state import UDAHubState
-from uda_hub.agentic.agents.request_enricher import data_enricher_node
+from uda_hub.agentic.agents.enricher import data_enricher_node
 from uda_hub.agentic.agents.classifier import classifier_node
 from uda_hub.agentic.agents.researcher import researcher_node, research_safety_router
 from uda_hub.agentic.agents.drafter import drafter_node
 from uda_hub.agentic.agents.policy_checker import policy_checker_node
 from uda_hub.agentic.agents.archivist import archivist_node
-from uda_hub.agentic.agents.clarificator import clarificator_node
 from uda_hub.agentic.agents.escalator import escalation_node
 from uda_hub.agentic.agents.supervisor import supervisor_router
-from uda_hub.agentic.agents.greater import greeter_node
-from uda_hub.agentic.agents.closure_node import closer_node
 from uda_hub.agentic.agents.historian import historian_node
+from uda_hub.agentic.agents.concierge import concierge_node, concierge_router
 
 load_dotenv()
+
+# Use shared node_log from uda_hub.agentic.tools.logging
 
 # ==========================================
 # 1. ROUTING & BRIDGE LOGIC
@@ -65,9 +66,7 @@ workflow.add_node("historian", historian_node)
 workflow.add_node("entry_bridge", entry_bridge_node)
 workflow.add_node("enricher", data_enricher_node)
 workflow.add_node("classifier", classifier_node)
-workflow.add_node("greeter", greeter_node)
-workflow.add_node("closer", closer_node)
-workflow.add_node("clarifier", clarificator_node)
+workflow.add_node("concierge", concierge_node)
 workflow.add_node("escalator", escalation_node)
 workflow.add_node("researcher", researcher_node)
 workflow.add_node("drafter", drafter_node)
@@ -78,7 +77,19 @@ workflow.add_node("archivist", archivist_node)
 
 # Initial Pipeline
 workflow.add_edge(START, "entry_bridge")
-workflow.add_edge("entry_bridge", "enricher")
+workflow.add_edge("entry_bridge", "concierge")
+
+# concierge Decision (Inbound Traffic)
+workflow.add_conditional_edges(
+    "concierge",
+    concierge_router,
+    {
+        "greeter": END,
+        "closer": "archivist",
+        "support_request": "enricher",
+    },
+)
+
 workflow.add_edge("enricher", "historian")
 workflow.add_edge("historian", "classifier")
 
@@ -87,11 +98,8 @@ workflow.add_conditional_edges(
     "classifier",
     supervisor_router,
     {
-        "greeter": "greeter",
-        "closer": "closer",
         "researcher": "researcher",
         "escalator": "escalator",
-        "clarifier": "clarifier",
     },
 )
 
@@ -108,9 +116,6 @@ workflow.add_conditional_edges(
 )
 
 # All terminal paths flow to Archivist to persist authenticated data
-workflow.add_edge("greeter", "archivist")
-workflow.add_edge("closer", "archivist")
-workflow.add_edge("clarifier", "archivist")
 workflow.add_edge("escalator", "archivist")
 
 # The Final Finish
@@ -153,6 +158,27 @@ if __name__ == "__main__":
     for event in app.stream(initial_state, config):
         for node, values in event.items():
             print(f"\n📍 NODE: {node}")
+
+            # Structured audit logs for important decision points
+            # CLASSIFIER: category, urgency, confidence
+            if node.lower() == "classifier":
+                conf = values.get("confidence")
+                if conf is None:
+                    conf = values.get("retrieval_confidence")
+                node_log("classifier", category=values.get("category"), urgency=values.get("urgency"), confidence=conf)
+
+            # SUPERVISOR-like decisions: explicit route/reason fields
+            if "route" in values or "reason" in values:
+                node_log("supervisor", route=values.get("route"), reason=values.get("reason"))
+
+            # RESEARCHER: retrieval confidence and match counts
+            if node.lower() == "researcher":
+                node_log(
+                    "researcher",
+                    retrieval_confidence=values.get("retrieval_confidence"),
+                    kb_matches=values.get("kb_matches"),
+                    reservation_matches=values.get("reservation_matches"),
+                )
 
             # 1. Identity Check
             if "user_id" in values and values["user_id"]:
