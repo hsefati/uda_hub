@@ -1,4 +1,5 @@
 import os
+import uuid
 
 from datetime import datetime
 from dotenv import load_dotenv
@@ -41,26 +42,26 @@ def archivist_node(state: UDAHubState):
     if not user_id:
         print("⏸️ Archivist: Bypassing archive (Anonymous session).")
         return {"archive_summary": "Skipped: User is anonymous."}
-
-    # 2. Setup ID and Context
-    # We use the user_id to ensure the ticket is linked correctly in the DB
-    ticket_id = (
-        state.get("ticket_id") or f"TICK_{user_id}_{int(datetime.now().timestamp())}"
+    
+    existing_id = state.get("similar_ticket_id") 
+    is_recurring = state.get("is_recurring", False)
+    
+    ticket_id = existing_id if (is_recurring and existing_id) else (
+        state.get("ticket_id") or f"{uuid.uuid4()}"
     )
 
-    # We give the agent the "Anchor" and the "Resolution" so the summary is accurate
     context = (
-        f"--- TICKET DETAILS ---\n"
+        f"--- ARCHIVE TASK ---\n"
+        f"Action: {'UPDATE EXISTING' if is_recurring else 'CREATE NEW'}\n"
         f"Ticket ID: {ticket_id}\n"
-        f"Original Request (Anchor): {state.get('ticket_text')}\n"
+        f"User ID: {user_id}\n"
         f"Final Category: {state.get('category')}\n"
-        f"Final Resolution Provided: {state.get('ai_response')}\n"
-        f"--- FULL HISTORY ---\n"
-        f"{state.get('messages')}"
+        f"Resolution: {state.get('ai_response')}\n"
+        f"History: {state.get('messages')[-5:]}" # Last 5 messages for context
     )
 
     # 3. Invoke the Agent
-    config = {"configurable": {"thread_id": f"archive_{ticket_id}"}}
+    # config = {"configurable": {"thread_id": f"archive_{ticket_id}"}}
     result = archivist_agent.invoke({"messages": [("user", context)]}, config)
 
     # 4. Return the summary for the state
@@ -69,8 +70,6 @@ def archivist_node(state: UDAHubState):
         "ticket_id": ticket_id,  # Ensure the ticket_id persists in the state
     }
 
-
-from datetime import datetime
 
 if __name__ == "__main__":
     print("🗄️ --- TESTING ARCHIVIST AGENT & IDENTITY GATE ---")

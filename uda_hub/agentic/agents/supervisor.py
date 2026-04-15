@@ -8,40 +8,51 @@ def supervisor_router(
 ) -> Literal["researcher", "escalator", "clarifier", "greeter", "closer"]:
     """
     Traffic Controller: Routes the user based on intent, identity,
-    and the presence of an active ticket anchor.
+    Durable History (Long-Term Memory), and active ticket anchors.
     """
     category = state.get("category")
     urgency = state.get("urgency")
     user_id = state.get("user_id")
     confidence = state.get("confidence_score", 0.0)
-    anchor = state.get("ticket_text")  # The Dynamic Anchor
+    anchor = state.get("ticket_text")
+
+    # NEW: Long-Term Memory Fields
+    suggested_action = state.get("suggested_history_action")
+    is_recurring = state.get("is_recurring", False)
 
     # --- THE HIJACK PROTECTION (Priority 1) ---
-    # We only go to the Greeter if it's a fresh 'Hello' with NO active ticket.
     if category == "greeting" and not anchor:
         return "greeter"
 
     # --- THE SECURITY/URGENCY GATE (Priority 2) ---
-    # VIPs or low-confidence triage go straight to human help.
     if urgency == "high" or confidence < 0.75:
         return "escalator"
 
-    # --- THE IDENTITY GATE (Priority 3) ---
-    # If we have an anchor but NO user_id, we MUST stay in the clarifier loop,
-    # even if the classifier mislabeled this turn as a 'greeting'.
-    requires_auth = ["billing", "account_management", "technical_issue"]
+    # --- THE HISTORY GATE (Priority 3) - NEW ---
+    # If the Historian detected a similar ticket in the durable database,
+    # we follow the 'Gatekeeper' recommendation before proceeding.
+    if suggested_action == "escalate":
+        print("🚨 History Check: High-risk repeat issue. Forcing Escalation.")
+        return "escalator"
 
+    if suggested_action == "clarify" or is_recurring:
+        # This is where we 'do nothing first'—we pause to ask the user
+        # if this is a repeat of their previous ticket.
+        print(f"🚨 History Check: Duplicate detected. Routing to Clarifier.")
+        return "clarifier"
+
+    # --- THE IDENTITY GATE (Priority 4) ---
+    requires_auth = ["billing", "account_management", "technical_issue"]
     if not user_id:
-        # If it's a sensitive category OR we are already tracking an anchor
         if category in requires_auth or anchor:
             return "clarifier"
-        
-    # If the user is satisfied, go to the closer
+
+    # --- THE SATISFACTION GATE (Priority 5) ---
     if category == "satisfaction":
         return "closer"
 
     # --- THE AUTOMATION PATH (Default) ---
-    # We have an anchor, we have a user_id, and it's safe to automate.
+    # We have an anchor, an ID, and no history blockers.
     return "researcher"
 
 

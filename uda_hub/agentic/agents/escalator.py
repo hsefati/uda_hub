@@ -18,35 +18,41 @@ llm = ChatOpenAI(
 )
 
 
-# The Escalation Agent Node
 def escalation_node(state: UDAHubState) -> dict:
     """
-    Reads the full context of the failed or high-risk ticket and packages it
-    into a concise internal note for a human support agent.
+    Refined Escalation Node: Now includes Knowledge Retrieval confidence
+    to explain exactly why the AI is handing over the ticket.
     """
-    # Extract relevant context from the State
+    # 1. Extract existing metadata
     ticket_text = state.get("ticket_text", "No text provided.")
     tier = state.get("customer_tier", "Unknown")
     status = state.get("subscription_status", "Unknown")
     category = state.get("category", "Unknown")
     urgency = state.get("urgency", "Unknown")
 
+    # 2. Extract the NEW Research Metrics
+    retrieval_conf = state.get("retrieval_confidence", 0.0)
+    research_facts = state.get("research_facts", "No research attempted.")
+
     escalation_prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                "You are the Escalation Coordinator for CultPass. "
-                "Your job is to read a customer ticket and the system metadata, and write a "
-                "brief, bulleted internal summary for the human support agent who will take over. "
-                "DO NOT respond to the customer. Write an internal note.\n\n"
+                "You are the Escalation Coordinator for UDA-Hub. "
+                "Your job is to provide a concise internal note for a human agent.\n\n"
+                "CRITICAL: If the 'Retrieval Confidence' is low (below 0.6), explicitly state "
+                "that the AI could not find a matching policy in the Knowledge Base.\n\n"
                 "Format your response exactly like this:\n"
-                "**Reason for Escalation:** [Why this needs a human]\n"
+                "**Reason for Escalation:** [Urgency/VIP or Knowledge Retrieval Failure]\n"
+                "**Retrieval Confidence:** [0.0 - 1.0]\n"
                 "**Customer Context:** [Tier & Status]\n"
-                "**Issue Summary:** [1-2 sentences on what they want]",
+                "**Internal Research Context:** [Briefly what was found or not found]\n"
+                "**Issue Summary:** [What does the user need?]",
             ),
             (
                 "human",
-                "Metadata: Tier={tier}, Status={status}, Category={category}, Urgency={urgency}\n\n"
+                "Metadata: Tier={tier}, Status={status}, Category={category}, Urgency={urgency}, Confidence={conf}\n"
+                "Research Findings: {facts}\n"
                 "Customer Ticket: {ticket_text}",
             ),
         ]
@@ -59,21 +65,22 @@ def escalation_node(state: UDAHubState) -> dict:
             "status": status,
             "category": category,
             "urgency": urgency,
+            "conf": retrieval_conf,
+            "facts": research_facts,
             "ticket_text": ticket_text,
         }
     ).content
 
     public_msg = (
         f"I've reviewed your request regarding {category}. Because this requires specialized "
-        f"assistance, I am handing this conversation over to one of our human experts. "
-        f"They will be with you shortly!"
+        f"assistance to ensure everything is handled correctly, I am handing this over to "
+        f"one of our human experts. They will be with you shortly!"
     )
 
-    # 4. Return everything needed for Option B
     return {
         "handoff_summary": internal_note,
-        "ai_response": public_msg,  # The string version
-        "messages": [AIMessage(content=public_msg)],  # The Chat UI version
+        "ai_response": public_msg,
+        "messages": [AIMessage(content=public_msg)],
         "status": "pending_human",
     }
 

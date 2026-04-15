@@ -1,38 +1,47 @@
 from typing import TypedDict, Optional, List, Annotated
 from langgraph.graph.message import add_messages
 
+
 class UDAHubState(TypedDict):
-    # --- Input Handling & Dynamic Anchoring ---
-    # messages is the "Source of Truth" for the conversation history
-    # Annotated[..., add_messages] tells LangGraph to APPEND new messages rather than overwrite
-    messages: Annotated[List, add_messages] 
-    
-    # latest_input stores ONLY what the user said in the current turn
+    # --- Conversation State (Short-Term Memory) ---
+    messages: Annotated[List, add_messages]
     latest_input: Optional[str]
-    
-    # ticket_text is the "Anchor" - once set, it shouldn't change
     ticket_text: Optional[str]
-    
+
     # --- Identity & Enrichment ---
     user_email: Optional[str]
     user_id: Optional[str]
     customer_tier: Optional[str]
     subscription_status: Optional[str]
-    
-    # --- Classification ---
-    category: Optional[str]  # e.g., 'greeting', 'billing', 'technical'
+
+    # --- Durable Context (Long-Term Memory) ---
+    # user_history: Fetched via lookup_user_history tool
+    user_history: Optional[str]
+    # is_recurring: Semantic flag for duplicate/repeat issues
+    is_recurring: Optional[bool]
+    # history_reasoning: Explanation of why it's recurring or unique
+    history_reasoning: Optional[str]
+    # suggested_history_action: Operational advice for the Supervisor
+    suggested_history_action: Optional[str]
+    # similar_ticket_id: ID of a similar previously resolved ticket
+    similar_ticket_id: Optional[str]
+
+    # --- Classification & Triage ---
+    category: Optional[str]
     urgency: Optional[str]
     confidence_score: Optional[float]
-    
-    # --- Processing ---
+
+    # --- Knowledge Retrieval & Grounding ---
     research_facts: Optional[str]
+    retrieval_confidence: Optional[float]
+    needs_escalation: Optional[bool]
+
+    # --- Generation & Quality Assurance ---
     ai_response: Optional[str]
-    
-    # --- Quality Assurance ---
-    policy_grade: Optional[str]    # "PASS" or "FAIL"
+    policy_grade: Optional[str]
     policy_feedback: Optional[str]
-    
-    # --- Output & Handoff ---
-    archive_summary: Optional[str] # For the database
-    handoff_summary: Optional[str] # For the human agent (Escalation)
-    status: Optional[str]          # 'in_progress', 'pending_human', 'pending_user'
+
+    # --- Archivist & Handoff ---
+    archive_summary: Optional[str]
+    handoff_summary: Optional[str]
+    status: Optional[str]  # 'in_progress', 'pending_human', 'closed'

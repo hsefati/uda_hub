@@ -48,30 +48,6 @@ def model_to_dict(instance):
         for column in instance.__table__.columns
     }
 
-# def chat_interface(agent:CompiledStateGraph, ticket_id:str):
-#     is_first_iteration = False
-#     messages = [SystemMessage(content = f"ThreadId: {ticket_id}")]
-#     while True:
-#         user_input = input("User: ")
-#         print("User:", user_input)
-#         if user_input.lower() in ["quit", "exit", "q"]:
-#             print("Assistant: Goodbye!")
-#             break
-#         messages = [HumanMessage(content=user_input)]
-#         if is_first_iteration:
-#             messages.append(HumanMessage(content=user_input))
-#         trigger = {
-#             "messages": messages
-#         }
-#         config = {
-#             "configurable": {
-#                 "thread_id": ticket_id,
-#             }
-#         }
-        
-#         result = agent.invoke(input=trigger, config=config)
-#         print("Assistant:", result["messages"][-1].content)
-#         is_first_iteration = False
 
 def chat_interface(agent: CompiledStateGraph, ticket_id: str):
     print(f"--- Session Started (Thread: {ticket_id}) ---")

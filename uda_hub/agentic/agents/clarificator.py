@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage
 from uda_hub.agentic.tools.udahub_state import UDAHubState
 from langchain_core.messages import HumanMessage
+from langchain.agents import create_agent
 
 load_dotenv()
 
@@ -17,45 +18,68 @@ llm = ChatOpenAI(
 )
 
 
-def clarification_node(state: UDAHubState) -> dict:
+clarifier_agent = create_agent(
+    name="clarifier_agent",
+    model=llm,
+    system_prompt=(
+        "You are the UDA-Hub Clarifier. Your job is to resolve ambiguity or missing identity.\n\n"
+        "--- SPECIAL MISSION: RECURRING ISSUES ---\n"
+        "If the 'is_recurring' flag is True, you must act as a Gatekeeper:\n"
+        "1. Acknowledge the user's previous history found in the database.\n"
+        "2. Ask if the current request is a follow-up to the previous ticket or a brand new issue.\n"
+        "3. DO NOT perform research. Your goal is only to confirm the user's intent.\n\n"
+        "--- STANDARD MISSION ---\n"
+        "If there is no history, focus on identifying the user (email) or clarifying a vague request."
+    ),
+)
+
+
+def clarificator_node(state: UDAHubState):
     """
-    An 'Identity Specialist' node that analyzes the full history
-    to ask for the most appropriate missing identifier.
+    The Multi-Memory Clarifier:
+    1. Checks 'messages' (Short-term) to see the immediate conversation.
+    2. Checks 'user_history' (Long-term) to handle recurring issues.
+    3. Prompts the user based on which memory is more urgent.
     """
-    # 1. Pull the full context
+    # Short-term context
     messages = state.get("messages", [])
-    ticket_text = state.get("ticket_text", "an issue")
+    anchor = state.get("ticket_text")
 
-    # 2. Dynamic Prompt for identity recovery
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                "You are the UDA-Hub Identity Specialist. Your goal is to help find the customer's account.\n\n"
-                "INSTRUCTIONS:\n"
-                "1. Analyze the conversation history. See if the user already provided an identifier.\n"
-                "2. If they provided an email but the system still didn't find them, ask for a Membership ID or Phone Number instead.\n"
-                "3. If they haven't provided anything, ask for their Email OR Membership ID.\n"
-                "4. ACKNOWLEDGE their specific problem (found in the 'User's Issue') so they know we are listening.\n"
-                "5. Keep it to 2 empathetic sentences. Do NOT try to solve the technical issue yet.",
-            ),
-            # Passing the actual messages list so the LLM sees the history
-            *messages,
-            ("human", f"User's Issue: {ticket_text}"),
-        ]
-    )
+    # Long-term context (from Historian)
+    is_recurring = state.get("is_recurring", False)
+    history = state.get("user_history")
+    reasoning = state.get("history_reasoning")
 
-    chain = prompt | llm
+    # Construction of the agent's task
+    # We include the last few messages so the agent doesn't repeat itself
+    recent_chat = "\n".join([f"{m.type}: {m.content}" for m in messages[-3:]])
 
-    # We don't need to pass category/text separately if they are in history,
-    # but providing 'ticket_text' specifically helps the 'Acknowledge' instruction.
-    response = chain.invoke({})
-    response_text = response.content
+    if is_recurring:
+        # Priority: Address the duplicate ticket first (Gatekeeper mode)
+        prompt_task = (
+            f"--- LONG-TERM CONTEXT (Recurring Issue) ---\n"
+            f"REASON: {reasoning}\n"
+            f"HISTORY: {history}\n\n"
+            f"--- SHORT-TERM CONTEXT (Recent Chat) ---\n"
+            f"{recent_chat}\n\n"
+            "The user might be repeating a past request. Ask them to clarify "
+            "if this is the same issue or something new."
+        )
+    else:
+        # Standard mode: Identity or intent clarification
+        prompt_task = (
+            f"--- RECENT CHAT ---\n{recent_chat}\n\n"
+            f"ANCHORED REQUEST: {anchor}\n"
+            "Please ask the user for their email or to clarify their vague request."
+        )
+
+    # Invoke the agent
+    result = clarifier_agent.invoke({"messages": [("user", prompt_task)]})
 
     return {
-        "ai_response": response_text,
-        "messages": [AIMessage(content=response_text)],
-        "status": "pending_user",  # Signal that we are waiting for user input
+        "ai_response": result["messages"][-1].content,
+        "messages": [AIMessage(content=result["messages"][-1].content)],
+        "status": "pending_user",
     }
 
 
