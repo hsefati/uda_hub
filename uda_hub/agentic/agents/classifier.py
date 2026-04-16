@@ -93,7 +93,7 @@ def classifier_node(state: UDAHubState) -> dict:
     updates = response.model_dump()
 
     # --- DYNAMIC ANCHORING LOGIC ---
-    if not existing_ticket and updates["category"] != "greeting":
+    if not existing_ticket:
         updates["ticket_text"] = latest_input
     else:
         updates["ticket_text"] = existing_ticket

@@ -38,23 +38,6 @@ def qa_router(state: UDAHubState) -> Literal["drafter", "archivist"]:
     return "archivist"
 
 
-def entry_bridge_node(state: UDAHubState):
-    """
-    Prepares the state for a new turn.
-    Clears temporary decision fields while preserving the conversation history.
-    """
-    messages = state.get("messages", [])
-    latest_input = messages[-1].content if messages else ""
-
-    return {
-        "latest_input": latest_input,
-        "research_facts": None,  # Reset for new research pass
-        "policy_grade": None,  # Clear previous audit
-        "policy_feedback": None,  # Clear previous feedback
-        "ai_response": None,  # Clear previous draft
-    }
-
-
 # ==========================================
 # 2. GRAPH DEFINITION
 # ==========================================
@@ -63,7 +46,6 @@ workflow = StateGraph(UDAHubState)
 
 # Add Nodes
 workflow.add_node("historian", historian_node)
-workflow.add_node("entry_bridge", entry_bridge_node)
 workflow.add_node("enricher", data_enricher_node)
 workflow.add_node("classifier", classifier_node)
 workflow.add_node("concierge", concierge_node)
@@ -76,8 +58,7 @@ workflow.add_node("archivist", archivist_node)
 # --- Define the Connections ---
 
 # Initial Pipeline
-workflow.add_edge(START, "entry_bridge")
-workflow.add_edge("entry_bridge", "concierge")
+workflow.add_edge(START, "concierge")
 
 # concierge Decision (Inbound Traffic)
 workflow.add_conditional_edges(
@@ -144,12 +125,16 @@ if __name__ == "__main__":
 
     # Alice returns to ask for a refund.
     # This should trigger: Concierge (Triage) -> Enricher (ID) -> Historian (Memory) -> Classifier -> Supervisor
+    user_input = "I want to know what's included in my CultPass. My email is bob.stone@granite.com"
     initial_state = {
         "messages": [
             HumanMessage(
-                content="I can't attend my Christ the Redeemer booking. Refund?. My email is alice.kingsley@wonderland.com."
+                # content="I can't attend my Christ the Redeemer booking. Refund?. My email is alice.kingsley@wonderland.com."
+                # content="I'd like to know what's included in my current plan. My email is bob.stone@granite.com."
+                content=user_input
             )
         ],
+        "ticket_text": user_input 
     }
 
     config = {"configurable": {"thread_id": f"{uuid.uuid4()}"}}

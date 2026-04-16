@@ -13,13 +13,12 @@ def supervisor_router(
     """
     category = state.get("category")
     urgency = state.get("urgency")
-    user_id = state.get("user_id")
     confidence = state.get("confidence_score", 0.0)
     anchor = state.get("ticket_text")
 
     # NEW: Long-Term Memory Fields
     suggested_action = state.get("suggested_history_action")
-    is_recurring = state.get("is_recurring", False)
+    # is_recurring = state.get("is_recurring", False)
 
     # --- THE HIJACK PROTECTION (Priority 1) ---
     if category == "greeting" and not anchor:

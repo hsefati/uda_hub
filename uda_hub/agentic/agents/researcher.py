@@ -87,64 +87,75 @@ def research_safety_router(state: UDAHubState) -> Literal["drafter", "escalator"
     return "drafter"
 
 
+# Constants for the node
+MAX_RESEARCH_RETRIES = 2
+
+
 def researcher_node(state: UDAHubState):
     """
-    1. Orchestrates the Researcher Agent to find facts.
-    2. Uses a structured LLM call to Grade those facts against the ticket.
-    3. Returns facts, a numerical confidence score, and an escalation flag.
+    Improved Researcher: Features a self-correction loop.
+    If the grader finds the facts insufficient, the agent is asked to
+    pivot its search strategy (e.g., broader keywords) before giving up.
     """
     anchor = state.get("ticket_text")
     user_id = state.get("user_id")
     tier = state.get("customer_tier", "regular")
 
-    # --- STEP 1: EXECUTE RESEARCH AGENT ---
-    prompt_task = (
-        f"ANCHORED TICKET: {anchor}\n"
-        f"USER CONTEXT: ID={user_id}, Tier={tier}\n\n"
-        "Please find the relevant policies and verify any associated bookings."
-    )
+    # We maintain a local history for this specific research task
+    research_history = [
+        (
+            "system",
+            f"TASK: Find policies and bookings for: {anchor}\nCONTEXT: UserID={user_id}, Tier={tier}",
+        )
+    ]
 
-    config = {
-        "configurable": {"thread_id": state.get("user_id", "internal_research_turn")}
+    attempts = 0
+    final_facts = ""
+    final_grade = None
+
+    while attempts <= MAX_RESEARCH_RETRIES:
+        # --- STEP 1: EXECUTE AGENT ---
+        # We pass the full local history so the agent remembers previous failed queries
+        result = researcher_agent.invoke({"messages": research_history})
+        final_facts = result["messages"][-1].content
+
+        # --- STEP 2: GRADE THE RESEARCH ---
+        grader_llm = llm.with_structured_output(ResearchGrade)
+        grading_prompt = (
+            "You are the UDA-Hub Research Grader. Assess if the facts are sufficient.\n\n"
+            f"USER TICKET: {anchor}\n"
+            f"FOUND FACTS: {final_facts}\n\n"
+            "SCORING RULES:\n"
+            "1. SUCCESS (0.9-1.0): The facts show the standard policy AND confirm the user's Tier (e.g., Basic/Premium). "
+            "If the user is Basic, do NOT penalize for a lack of 'unique' benefits.\n"
+            "2. PARTIAL (0.5-0.7): You have the policy but haven't verified the user's specific tier or reservations.\n"
+            "3. FAIL (0.0-0.4): No relevant policy found or search failed.\n"
+            "NOTE: If the agent confirms the user is a 'Basic' tier and provides the standard inclusions, THIS IS SUFFICIENT."
+        )
+        final_grade: ResearchGrade = grader_llm.invoke(grading_prompt)
+
+        # EXIT CONDITION: High confidence or we've run out of retries
+        if final_grade.is_sufficient or attempts == MAX_RESEARCH_RETRIES:
+            break
+
+        # --- STEP 3: PIVOT (Preparation for Retry) ---
+        attempts += 1
+        research_history.append(("assistant", final_facts))
+        research_history.append(
+            (
+                "user",
+                f"INSUFFICIENT (Confidence: {final_grade.confidence_score}). "
+                f"FEEDBACK: {final_grade.reasoning}. "
+                "Try a broader SQL search using LIKE or checking the 'tags' column.",
+            )
+        )
+
+    # --- STEP 4: RETURN FINAL STATE ---
+    return {
+        "research_facts": final_facts,
+        "retrieval_confidence": final_grade.confidence_score,
+        "needs_escalation": not final_grade.is_sufficient,
     }
-
-    # Execute the agent to gather raw facts
-    result = researcher_agent.invoke({"messages": [("user", prompt_task)]}, config)
-    found_facts = result["messages"][-1].content
-
-    # --- STEP 2: LLM-BASED GRADING (The "Missing Piece") ---
-    # We use structured output to generate a numerical confidence score
-    grader_llm = llm.with_structured_output(ResearchGrade)
-
-    grading_prompt = (
-        "You are the UDA-Hub Research Grader. Your goal is to assess if the found facts "
-        "are sufficient to answer the user's ticket correctly.\n\n"
-        f"USER TICKET: {anchor}\n"
-        f"FOUND FACTS: {found_facts}\n\n"
-        "SCORING RULES:\n"
-        "1. If the facts contain the specific policy or booking info needed: 0.8 - 1.0\n"
-        "2. If the facts are related but incomplete: 0.4 - 0.7\n"
-        "3. If the facts say 'No information found' or are irrelevant: 0.0 - 0.3 (is_sufficient = False)"
-    )
-
-    grade: ResearchGrade = grader_llm.invoke(grading_prompt)
-
-    # --- STEP 3: RETURN STRUCTURED STATE ---
-    out = {
-        "research_facts": found_facts,
-        "retrieval_confidence": grade.confidence_score,  # Numerical score for routing
-        "needs_escalation": not grade.is_sufficient,  # Deterministic flag for routing
-    }
-
-    # Structured logging (include optional match counts if present)
-    node_log(
-        "researcher",
-        retrieval_confidence=out.get("retrieval_confidence"),
-        kb_matches=out.get("kb_matches"),
-        reservation_matches=out.get("reservation_matches"),
-    )
-
-    return out
 
 
 if __name__ == "__main__":

@@ -23,10 +23,9 @@ class SimilarityGrade(BaseModel):
         description="Explanation of why this is or isn't a duplicate."
     )
     suggested_action: str = Field(
-        description="Recommended next step (e.g., 'escalate', 'clarify', 'proceed').",
+        description="Recommended next step (e.g., 'escalate', 'proceed').",
         json_schema_extra=[
             "escalate",
-            "clarify",
             "proceed",
         ],
     )
