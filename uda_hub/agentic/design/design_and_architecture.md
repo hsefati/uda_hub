@@ -1,10 +1,10 @@
-# UDA-Hub Multi-Agent Architecture Design
+# UDA-Hub Multi-Agent Architecture Design (Updated)
 
-This document outlines the architecture for the UDA-Hub Agentic Customer Support System, a multi-agent assembly line built on LangGraph. The system is designed to handle support tickets by enriching user data, classifying intent, researching facts across multiple databases, and drafting compliant, empathetic responses.
+This document outlines the refactored architecture for the UDA-Hub Agentic Customer Support System. The system now follows a Concierge-First model to maximize efficiency and data integrity.
 
 ## 1. System Overview
 
-The UDA-Hub system utilizes a Directed Acyclic Graph (DAG) with Dynamic Anchoring and self-correction loops. The architecture treats every interaction as a turn-based progression through specialized nodes, ensuring that security (Identity Gates) and quality (Policy Audits) are never bypassed.
+The UDA-Hub system utilizes a Directed Acyclic Graph (DAG) with an Identity Gatekeeper at the entry point. The architecture enforces a strict separation between social interactions (Greetings/Closures) and authenticated support workflows requiring database access.
 
 ## 2. Visual Diagram (Mermaid)
 
@@ -12,91 +12,74 @@ The UDA-Hub system utilizes a Directed Acyclic Graph (DAG) with Dynamic Anchorin
 graph TD
     %% Entry Point
     Start((User Input)) --> Bridge[Entry Bridge]
-    Bridge --> Enricher[Enricher Agent]
-    Enricher --> Classifier[Classifier Agent]
+    Bridge --> Concierge[Concierge Agent]
 
-    %% Router Logic
+    %% Concierge Identity Gate
+    Concierge -- "support_request + is_identified" --> Enricher[Enricher Agent]
+    Concierge -- "greeting / closure / need_user_response" --> Archivist[Archivist Agent]
+
+    %% Authenticated Heavy Path
+    Enricher --> Historian[Historian Agent]
+    Historian --> Classifier[Classifier Agent]
+
+    %% Technical Routing
     Classifier --> Supervisor{Supervisor Router}
-
-    %% Branching Paths
-    Supervisor -- "No Ticket + Greeting" --> Greeter[Greeter Agent]
-    Supervisor -- "Ticket + Missing ID" --> Clarifier[Clarifier Agent]
-    Supervisor -- "Angry/VIP/High Risk" --> Escalator[Escalator Agent]
-    Supervisor -- "User Satisfied" --> Closer[Closer Agent]
-    Supervisor -- "Authenticated Ticket" --> Researcher[Researcher Agent]
+    Supervisor -- "Standard / Automated" --> Researcher[Researcher Agent]
+    Supervisor -- "High Urgency / Repeat Issue" --> Escalator[Escalator Agent]
 
     %% Main Automation Loop
     Researcher --> Drafter[Drafter Agent]
     Drafter --> QA[Policy Checker Agent]
 
     %% Self-Correction Loop
-    QA -- "FAIL: Policy Violation" --> Drafter
+    QA -- "FAIL" --> Drafter
 
-    %% The 'All Roads Lead to Rome' Archive Pattern
-    Greeter --> Archivist[Archivist Agent]
-    Clarifier --> Archivist
+    %% Finalization
     Escalator --> Archivist
-    Closer --> Archivist
     QA -- "PASS" --> Archivist
 
     Archivist --> End((Resolved/Logged))
 
     %% Data Connections
-    Researcher -.-> DB1[(udahub.db)]
-    Enricher -.-> DB2[(cultpass.db)]
-    Archivist -.-> DB1
+    Enricher -.-> DB_CP[(cultpass.db)]
+    Historian -.-> DB_UD[(udahub.db)]
+    Researcher -.-> DB_UD
+    Archivist -.-> DB_UD
 ```
 
 ## 3. Agent Roles & Responsibilities
 
 | Agent | Responsibility | Key Input | Key Output |
 |---|---|---|---|
-| Enricher | Mines history for Name/Email/ID and queries cultpass.db. | messages, latest_input | user_id, customer_tier |
-| Classifier | Identifies intent and preserves the "Ticket Anchor." | messages, latest_input | category, ticket_text |
-| Greeter | Handles pleasantries when no active ticket is present. | user_name | ai_response |
-| Clarifier | Politely requests missing identification details. | ticket_text, messages | ai_response, status: pending_user |
-| Escalator | Hands off high-risk/VIP tickets to human managers. | urgency, ticket_text | ai_response, status: pending_human |
-| Researcher | Queries SQLite to find bookings and relevant policies. | user_id, ticket_text | research_facts |
-| Drafter | Synthesizes research into an empathetic email draft. | research_facts, tier | ai_response |
-| Policy Checker | Audits the draft for policy compliance/hallucinations. | ai_response, facts | policy_grade (PASS/FAIL) |
-| Closer | Finalizes the interaction when a user is satisfied. | messages | ai_response, status: closed |
-| Archivist | Tool-based agent that logs summaries to udahub.db. | ai_response, user_id | archive_summary, DB Entry |
+| Concierge | Acts as the "Front Desk." Handles triage and enforces the Identity Gate. | ticket_text, messages | triage_intent, is_identified, ai_response |
+| Enricher | Authenticates the user by querying the user and subscription tables. | user_email / name | user_id, customer_tier, subscription_status |
+| Historian | Retrieves "Durable Memory" by scanning past tickets for recurring issues. | user_id | user_history, is_recurring, similar_ticket_id |
+| Classifier | Specialist node identifying technical domains (Billing, Tech, Account). | ticket_text | support_category, urgency |
+| Researcher | Retrieves grounded facts from the internal Knowledge Base. | support_category | research_facts, retrieval_confidence |
+| Drafter | Synthesizes history and research into an empathetic response. | research_facts, user_history | ai_response |
+| Policy Checker | Audits drafts for compliance against official company policy. | ai_response, research_facts | policy_grade (PASS/FAIL) |
+| Archivist | Finalizes the turn by logging the interaction and updating metadata. | ai_response, status | archive_summary, status |
 
 ## 4. Information Flow & Decision Making
 
-### A. The "Anchor Shield" (Hijack Protection)
+### A. The Identity Gate (Refactored)
 
-The Supervisor uses the `ticket_text` (Anchor) to prevent context switching.
+The Concierge replaces the old Clarifier/Greeter/Closer nodes.
 
-- **Rule:** If `ticket_text` is populated, a greeting classification is ignored, and the user is kept in the identification or research loop.
-- **Rule:** If `user_id` is found mid-conversation (via the history-aware Enricher), the user is immediately promoted to the Researcher.
+- **Rule:** If the user has a problem but provides no ID, the Concierge handles the response immediately.
+- **Rule:** The "Heavy Path" (Enricher, Historian, Researcher) is only accessed if `is_identified` is `True`.
 
-### B. The Identity Gate
+### B. Durable Memory (Historian)
 
-The Archivist acts as the final gatekeeper for data integrity.
+The system now leverages the `udahub.db` `ticket_messages` and `tickets` tables to check for persistence.
 
-- **Condition:** If `user_id` is null, the Archivist bypasses the database write to prevent "anonymous clutter" in the production logs.
-- **Exception:** High-urgency escalations may be archived even without a `user_id` to provide context for human agents.
+- If a similar unresolved issue is found, the Supervisor bypasses automation and routes to the Escalator for human intervention.
 
-### C. The Satisfaction Loop
+### C. State Hygiene
 
-The system monitors for satisfaction or gratitude intents (e.g., "Thanks, that works!").
+The `entry_bridge` continues to ensure turn-based accuracy by resetting temporary flags (`policy_grade`, `research_facts`) while preserving `messages` for long-term context.
 
-Once detected, the Supervisor routes to the Closer, which sets the state `status` to `closed`, signaling the Archivist to seal the ticket record in the database.
+## 5. Implementation Strategy
 
-## 5. Input Handling & Expected Outputs
-
-### Input Types
-
-- **The "Alice" Scenario (Interrupted ID):** "Refund?" → "I need your email." → "I'm Alice."
-  - Path: Clarifier → User Input → Enricher (Finds ID) → Supervisor (Sees ID + Anchor) → Researcher.
-- **The "Polite Closure" Scenario:** "Thanks for the help, goodbye!"
-  - Path: Classifier (Satisfaction) → Supervisor → Closer → Archivist (Status: Closed).
-- **The "Ghost" Interaction:** A bot saying "Hello" repeatedly.
-  - Path: Classifier (Greeting) → Greeter → Archivist (Identity Gate Bypass) → END.
-
-## 6. Implementation Strategy
-
-- **History Awareness:** All extraction nodes (Enricher, Classifier) scan the `messages` list rather than just the latest string to ensure context is never lost.
-- **Tool Separation:** Database SQL logic is isolated into standalone `@tool` functions, allowing the Agents to remain model-agnostic and easily testable.
-- **State Hygiene:** The `entry_bridge` node resets turn-specific flags (`policy_grade`, `research_facts`) to ensure each turn starts with a clean slate while preserving the conversation memory.
+- **Database Mapping:** Enricher maps to `cultpass.db` (User/Subscription info). Historian and Researcher map to `udahub.db` (Tickets/Knowledge Base).
+- **Linear Efficiency:** The `classifier_node` no longer handles social chatter, allowing for higher precision in technical support classification.

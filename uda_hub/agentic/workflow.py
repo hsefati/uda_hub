@@ -84,9 +84,9 @@ workflow.add_conditional_edges(
     "concierge",
     concierge_router,
     {
-        "greeter": END,
-        "closer": "archivist",
-        "support_request": "enricher",
+        "enricher": "enricher",     # Matches intent == "support_request"
+        "archivist": "archivist",   # Matches intent == "closure"
+        "END": END                  # Matches intent == "greeting" (Goes to START/END)
     },
 )
 
@@ -139,82 +139,123 @@ except Exception:
 
 
 if __name__ == "__main__":
-    print("\n🚀 Starting UDA-Hub End-to-End Integration Test\n" + "=" * 50)
+    print("\n🚀 Starting UDA-Hub End-to-End Integration Test")
+    print("=" * 60)
 
-    # Note: Using the Alice scenario which should now trigger:
-    # 1. Identity Enrichment (Alice)
-    # 2. Research (Christ the Redeemer Refund Policy)
-    # 3. Grading (Confidence Score)
+    # Alice returns to ask for a refund.
+    # This should trigger: Concierge (Triage) -> Enricher (ID) -> Historian (Memory) -> Classifier -> Supervisor
     initial_state = {
         "messages": [
             HumanMessage(
                 content="I can't attend my Christ the Redeemer booking. Refund?. My email is alice.kingsley@wonderland.com."
             )
-        ]
+        ],
     }
 
     config = {"configurable": {"thread_id": f"{uuid.uuid4()}"}}
 
+    # Assuming 'app' is your compiled LangGraph
     for event in app.stream(initial_state, config):
         for node, values in event.items():
             print(f"\n📍 NODE: {node}")
 
-            # Structured audit logs for important decision points
-            # CLASSIFIER: category, urgency, confidence
-            if node.lower() == "classifier":
-                conf = values.get("confidence")
-                if conf is None:
-                    conf = values.get("retrieval_confidence")
-                node_log("classifier", category=values.get("category"), urgency=values.get("urgency"), confidence=conf)
+            # --- 1. CONCIERGE CHECK (The Front Desk) ---
+            if node.lower() == "concierge":
+                intent = values.get("triage_intent", "N/A")
+                is_identified = values.get("is_identified", False)
+                print(f"🏷️  Triage Intent: {intent.upper()}")
+                print(f"👤 Identity Status: {'IDENTIFIED' if is_identified else 'NOT IDENTIFIED'}")
+                if values.get("ai_response"):
+                    print(f"💬 Concierge Says: \"{values['ai_response']}\"")
 
-            # SUPERVISOR-like decisions: explicit route/reason fields
-            if "route" in values or "reason" in values:
-                node_log("supervisor", route=values.get("route"), reason=values.get("reason"))
+            # --- 2. IDENTITY & ENRICHMENT ---
+            if node.lower() == "enricher" and "user_id" in values:
+                user_id = values.get("user_id")
+                if user_id:
+                    print(f"👤 Identity: {user_id} | Tier: {values.get('customer_tier', 'N/A')}")
+                    node_log(
+                        "enricher_success",
+                        user_id=user_id,
+                        tier=values.get("customer_tier"),
+                        subscription_status=values.get("subscription_status"),
+                    )
+                else:
+                    print(f"❌ Identity: NOT FOUND")
+                    node_log("enricher_failure", reason="user_not_found")
 
-            # RESEARCHER: retrieval confidence and match counts
-            if node.lower() == "researcher":
+            # --- 3. HISTORIAN CHECK (Durable Memory) ---
+            if node.lower() == "historian":
+                recurring = values.get("is_recurring", False)
+                tid = values.get("similar_ticket_id", "None")
+                status = "🚨 RECURRING ISSUE" if recurring else "✨ UNIQUE ISSUE"
+                print(f"📚 Memory: {status} | Linked Ticket: {tid}")
+                if values.get("history_reasoning"):
+                    print(f"🔍 Reason: {values['history_reasoning']}")
+                # Already logged in historian.py, but we can add workflow-level context
                 node_log(
-                    "researcher",
-                    retrieval_confidence=values.get("retrieval_confidence"),
-                    kb_matches=values.get("kb_matches"),
-                    reservation_matches=values.get("reservation_matches"),
+                    "workflow_historian",
+                    is_recurring=recurring,
+                    similar_ticket_id=tid,
                 )
 
-            # 1. Identity Check
-            if "user_id" in values and values["user_id"]:
-                print(
-                    f"👤 Identity: {values['user_id']} | Tier: {values.get('customer_tier')}"
+            # --- 4. CLASSIFIER CHECK (Domain Specialist) ---
+            if node.lower() == "classifier":
+                category = values.get("category", "N/A")
+                urgency = values.get("urgency", "N/A")
+                confidence = values.get("confidence_score", 0.0)
+                print(f"🏷️  Category: {category} | Urgency: {urgency} | Confidence: {confidence}")
+                node_log(
+                    "workflow_classifier",
+                    category=category,
+                    urgency=urgency,
+                    confidence=confidence,
                 )
 
-            # 2. Intent Check
-            if "category" in values:
-                print(f"🏷️  Intent: {values['category'].upper()}")
+            # --- 5. ROUTING DECISION (Supervisor) ---
+            if node.lower() == "classifier":
+                # Log the routing decision after classifier processes
+                route = "researcher" if values.get("category") else "escalator"
+                print(f"🚦 Routing to: {route.upper()}")
+                node_log("routing_decision", next_node=route)
 
-            # 3. NEW: Research Confidence Check (The Reviewer's requirement)
-            if "retrieval_confidence" in values:
-                conf = values["retrieval_confidence"]
+            # --- 6. RESEARCHER (Knowledge Retrieval) ---
+            if node.lower() == "researcher":
+                conf = values.get("retrieval_confidence", 0.0)
+                kb_matches = values.get("kb_matches", 0)
+                res_matches = values.get("reservation_matches", 0)
                 status = "✅ SUFFICIENT" if conf >= 0.6 else "🚨 INSUFFICIENT"
                 print(f"📊 Retrieval Confidence: {conf} [{status}]")
+                print(f"📚 KB Matches: {kb_matches} | Reservation Matches: {res_matches}")
+                node_log(
+                    "workflow_researcher",
+                    retrieval_confidence=conf,
+                    kb_matches=kb_matches,
+                    reservation_matches=res_matches,
+                    confidence_sufficient=(conf >= 0.6),
+                )
 
-            # 4. Research Facts
-            if "research_facts" in values and values["research_facts"]:
-                # Print just the first 100 characters to keep logs clean
-                print(f"🔍 Facts: {values['research_facts']}...")
+            # --- 7. POLICY CHECK (Quality Assurance) ---
+            if node.lower() == "policy_checker":
+                grade = values.get("policy_grade", "N/A")
+                feedback = values.get("policy_feedback", "")
+                print(f"✔️  Policy Grade: {grade}")
+                if feedback:
+                    print(f"⚠️  Feedback: {feedback}")
+                node_log(
+                    "workflow_policy_check",
+                    grade=grade,
+                    has_feedback=bool(feedback),
+                )
 
-            # 5. NEW: Escalation/Handoff Check
-            if "handoff_summary" in values and values["handoff_summary"]:
-                print(f"📤 Internal Handoff Note:\n{values['handoff_summary']}")
+            # --- 8. FINAL RESPONSE & ARCHIVE ---
+            if "ai_response" in values and node.lower() == "drafter":
+                response_preview = values["ai_response"][:100] + "..." if len(values.get("ai_response", "")) > 100 else values.get("ai_response", "")
+                print(f"📩 Final Draft: {response_preview}")
+                node_log("draft_generated", response_length=len(values.get("ai_response", "")))
 
-            # 6. Response & QA Loop
-            if "ai_response" in values:
-                grade = values.get("policy_grade", "N/A (Escalated)")
-                print(f"📝 Draft Status: {grade}")
-                if values.get("policy_feedback"):
-                    print(f"⚠️  Feedback: {values['policy_feedback']}")
-                print(f"📩 Public Message: {values['ai_response']}...")
+            if node.lower() == "archivist":
+                archive_summary = values.get("archive_summary", "N/A")
+                print(f"🗄️  Archived: {archive_summary}")
+                node_log("workflow_archive", archive_summary=archive_summary)
 
-            # 7. Archive Result
-            if "archive_summary" in values:
-                print(f"🗄️  Archived: {values['archive_summary']}")
-
-    print("\n" + "=" * 50 + "\n✅ Integration Test Complete")
+    print("\n" + "=" * 60 + "\n✅ Integration Test Complete")

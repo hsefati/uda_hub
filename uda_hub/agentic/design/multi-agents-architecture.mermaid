@@ -1,36 +1,42 @@
 graph TD
-    %% Entry Point
-    Start((User Input)) --> Bridge[Entry Bridge]
-    Bridge --> Enricher[Enricher Agent]
-    Enricher --> Classifier[Classifier Agent]
+    %% Start and Entry
+    __start__([__start__]) --> entry_bridge[entry_bridge]
+    entry_bridge --> concierge[concierge]
 
-    %% Router Logic
-    Classifier --> Supervisor{Supervisor Router}
+    %% Concierge Triage Routing
+    concierge -.-> |greeting| __end__([__end__])
+    concierge -.-> |closure| archivist[archivist]
+    concierge -.-> |need_user_response| archivist
+    concierge -.-> |support_request| enricher[enricher]
 
-    %% Branching Paths
-    Supervisor -- "No Ticket + Greeting" --> Greeter[Greeter Agent]
-    Supervisor -- "Ticket + Missing ID" --> Clarifier[Clarifier Agent]
-    Supervisor -- "Angry/VIP/High Risk" --> Escalator[Escalator Agent]
-    Supervisor -- "User Satisfied" --> Closer[Closer Agent]
-    Supervisor -- "Authenticated Ticket" --> Researcher[Researcher Agent]
+    %% The Heavy Path
+    enricher --> historian[historian]
+    historian --> classifier[classifier]
 
-    %% Main Automation Loop
-    Researcher --> Drafter[Drafter Agent]
-    Drafter --> QA[Policy Checker Agent]
+    %% Specialist Routing
+    classifier -.-> |researcher| researcher[researcher]
+    classifier -.-> |escalator| escalator[escalator]
 
-    %% Self-Correction Loop
-    QA -- "FAIL: Policy Violation" --> Drafter
+    %% Research and QA Loop
+    researcher -.-> |drafter| drafter[drafter]
+    researcher -.-> |escalator| escalator
+    
+    drafter --> policy_checker[policy_checker]
+    policy_checker -.-> |FAIL| drafter
+    policy_checker -.-> |PASS| archivist
 
-    %% The 'All Roads Lead to Rome' Archive Pattern
-    Greeter --> Archivist[Archivist Agent]
-    Clarifier --> Archivist
-    Escalator --> Archivist
-    Closer --> Archivist
-    QA -- "PASS" --> Archivist
+    %% Finalization
+    escalator --> archivist
+    archivist --> __end__
 
-    Archivist --> End((Resolved/Logged))
+    %% Database Access (Cylinders)
+    subgraph Databases
+        cultpass_db[(cultpass.db)]
+        udahub_db[(udahub.db)]
+    end
 
-    %% Data Connections
-    Researcher -.-> DB1[(udahub.db)]
-    Enricher -.-> DB2[(cultpass.db)]
-    Archivist -.-> DB1
+    %% Database Links
+    enricher -.-> |"Read: users, subscriptions"| cultpass_db
+    historian -.-> |"Read: tickets, ticket_messages"| udahub_db
+    researcher -.-> |"Read: knowledge (KB)"| udahub_db
+    archivist -.-> |"Write: ticket_messages, metadata"| udahub_db

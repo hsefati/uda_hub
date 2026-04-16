@@ -6,7 +6,7 @@ from uda_hub.agentic.tools.logging import node_log
 # 2. The Supervisor Routing Function
 def supervisor_router(
     state: UDAHubState,
-) -> Literal["researcher", "escalator", "clarifier", "greeter", "closer"]:
+) -> Literal["researcher", "escalator", "greeter", "closer"]:
     """
     Traffic Controller: Routes the user based on intent, identity,
     Durable History (Long-Term Memory), and active ticket anchors.
@@ -41,22 +41,6 @@ def supervisor_router(
         route = "escalator"
         node_log("supervisor", route=route, reason="history_escalate")
         return route
-
-    if suggested_action == "clarify" or is_recurring:
-        # This is where we 'do nothing first'—we pause to ask the user
-        # if this is a repeat of their previous ticket.
-        print(f"🚨 History Check: Duplicate detected. Routing to Clarifier.")
-        route = "clarifier"
-        node_log("supervisor", route=route, reason="history_clarify_or_recurring")
-        return route
-
-    # --- THE IDENTITY GATE (Priority 4) ---
-    requires_auth = ["billing", "account_management", "technical_issue"]
-    if not user_id:
-        if category in requires_auth or anchor:
-            route = "clarifier"
-            node_log("supervisor", route=route, reason="requires_auth_missing_user")
-            return route
 
     # --- THE SATISFACTION GATE (Priority 5) ---
     if category == "satisfaction":

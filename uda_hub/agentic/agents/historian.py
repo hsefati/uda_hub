@@ -5,6 +5,7 @@ from typing import Optional
 from langchain_openai import ChatOpenAI
 from uda_hub.agentic.tools.tools import lookup_user_history
 from uda_hub.agentic.tools.udahub_state import UDAHubState
+from uda_hub.agentic.tools.logging import node_log
 
 from pydantic import BaseModel, Field
 
@@ -66,6 +67,15 @@ def historian_node(state: UDAHubState) -> dict:
     )
 
     grade: SimilarityGrade = grader_llm.invoke(grader_prompt)
+
+    # Log the history analysis
+    node_log(
+        "historian",
+        user_id=user_id,
+        is_recurring=grade.is_recurring,
+        similar_ticket_id=grade.similar_ticket_id,
+        suggested_action=grade.suggested_action,
+    )
 
     return {
         "user_history": past_history_text,

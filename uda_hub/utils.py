@@ -49,39 +49,71 @@ def model_to_dict(instance):
     }
 
 
-def chat_interface(agent: CompiledStateGraph, ticket_id: str):
-    print(f"--- Session Started (Thread: {ticket_id}) ---")
+# def chat_interface(agent: CompiledStateGraph, ticket_id: str):
+#     print(f"--- Session Started (Thread: {ticket_id}) ---")
     
-    # Optional: Send an initial setup if it's a brand new thread
-    # Otherwise, just start the loop.
+#     # Optional: Send an initial setup if it's a brand new thread
+#     # Otherwise, just start the loop.
+    
+#     while True:
+#         user_input = input("User: ")
+        
+#         if user_input.lower() in ["quit", "exit", "q"]:
+#             print("Assistant: Goodbye!")
+#             break
+
+#         # 1. We only send the LATEST message. 
+#         # LangGraph's 'add_messages' reducer will append this to the history.
+#         trigger = {
+#             "messages": [HumanMessage(content=user_input)]
+#         }
+        
+#         config = {
+#             "configurable": {
+#                 "thread_id": ticket_id,
+#             }
+#         }
+        
+#         # 2. Invoke the agent
+#         result = agent.invoke(input=trigger, config=config)
+        
+#         # 3. Access the last message in the updated state
+#         # Because result['messages'] contains the WHOLE history now, 
+#         # index -1 is the AI's latest response.
+#         if "messages" in result and result["messages"]:
+#             print("Assistant:", result["messages"][-1].content)
+#         else:
+#             # Fallback if your graph returned ai_response but didn't update messages
+#             print("Assistant:", result.get("ai_response", "I'm processing your request."))
+
+
+def chat_interface(agent, thread_id: str):
+    print(f"--- UDA-Hub Session Started (Thread: {thread_id}) ---")
     
     while True:
         user_input = input("User: ")
         
         if user_input.lower() in ["quit", "exit", "q"]:
-            print("Assistant: Goodbye!")
             break
 
-        # 1. We only send the LATEST message. 
-        # LangGraph's 'add_messages' reducer will append this to the history.
+        # 1. Prepare the trigger
+        # We pass ticket_text explicitly so the Concierge can analyze it easily
         trigger = {
-            "messages": [HumanMessage(content=user_input)]
+            "messages": [HumanMessage(content=user_input)],
+            "ticket_text": user_input 
         }
         
-        config = {
-            "configurable": {
-                "thread_id": ticket_id,
-            }
-        }
+        config = {"configurable": {"thread_id": thread_id}}
         
         # 2. Invoke the agent
         result = agent.invoke(input=trigger, config=config)
         
-        # 3. Access the last message in the updated state
-        # Because result['messages'] contains the WHOLE history now, 
-        # index -1 is the AI's latest response.
-        if "messages" in result and result["messages"]:
-            print("Assistant:", result["messages"][-1].content)
-        else:
-            # Fallback if your graph returned ai_response but didn't update messages
-            print("Assistant:", result.get("ai_response", "I'm processing your request."))
+        # 3. Handle the response logic
+        # PRIORITY 1: Check for an explicit ai_response (Concierge, Drafter, or Escalator)
+        final_msg = result.get("ai_response")
+
+        # PRIORITY 2: Fallback to the last message in the list
+        if not final_msg and result.get("messages"):
+            final_msg = result["messages"][-1].content
+
+        print(f"Assistant: {final_msg if final_msg else 'I am processing your request...'}")
