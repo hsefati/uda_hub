@@ -11,8 +11,7 @@ The UDA-Hub system utilizes a Directed Acyclic Graph (DAG) with an Identity Gate
 ```mermaid
 graph TD
     %% Entry Point
-    Start((User Input)) --> Bridge[Entry Bridge]
-    Bridge --> Concierge[Concierge Agent]
+    Start((User Input)) --> Concierge[Concierge Agent]
 
     %% Concierge Identity Gate
     Concierge -- "support_request + is_identified" --> Enricher[Enricher Agent]
