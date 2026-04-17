@@ -1,7 +1,7 @@
 from typing import Literal
 import uuid
 from dotenv import load_dotenv
-from uda_hub.agentic.tools.logging import node_log
+from uda_hub.agentic.tools.logging import node_log, get_tool_evidence
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -244,3 +244,18 @@ if __name__ == "__main__":
                 node_log("workflow_archive", archive_summary=archive_summary)
 
     print("\n" + "=" * 60 + "\n✅ Integration Test Complete")
+
+    # Summarize tool usage evidence captured during the run.
+    evidence = get_tool_evidence()
+    tool_events = [e for e in evidence if e[0].startswith("TOOL_")]
+    print("\n" + "-" * 40)
+    print("🔎 Tool Usage Evidence Summary")
+    if tool_events:
+        for tag, kw in tool_events:
+            # Simple inline formatting of key=val pairs
+            kvs = []
+            for k, v in (kw or {}).items():
+                kvs.append(f"{k}={v}")
+            print(f"[{tag}] " + " ".join(kvs))
+    else:
+        print("No tool usage recorded during this run.")

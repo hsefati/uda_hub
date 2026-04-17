@@ -2,6 +2,7 @@ import datetime
 import sqlite3
 from pathlib import Path
 from langchain_core.tools import tool
+from uda_hub.agentic.tools.logging import node_log
 
 
 def _get_db_path(db_name: str) -> str:
@@ -33,6 +34,7 @@ def search_knowledge_base(query: str) -> str:
     Do NOT use full phrases like "refund policy for events" or the database will fail to match.
     """
     try:
+        node_log("tool_search_knowledge_base", query=query)
         conn = sqlite3.connect(_get_db_path("udahub"))
         cursor = conn.cursor()
 
@@ -44,11 +46,15 @@ def search_knowledge_base(query: str) -> str:
         results = cursor.fetchall()
         conn.close()
 
+        found = bool(results)
+        node_log("tool_search_knowledge_base_result", query=query, found=found, matches=len(results) if results else 0)
+
         if not results:
             return f"No matching articles found for keyword: '{query}'"
 
         return "\n\n".join([f"Title: {row[0]}\nContent: {row[1]}" for row in results])
     except Exception as e:
+        node_log("tool_search_knowledge_base_error", query=query, error=str(e))
         return f"Database error: {str(e)}"
 
 
@@ -59,6 +65,7 @@ def check_reservations(user_id: str) -> str:
     Use this when a user asks about an experience, a booking, or a specific event.
     """
     try:
+        node_log("tool_check_reservations", user_id=user_id)
         conn = sqlite3.connect(_get_db_path("cultpass"))
         cursor = conn.cursor()
 
@@ -75,6 +82,8 @@ def check_reservations(user_id: str) -> str:
         results = cursor.fetchall()
         conn.close()
 
+        node_log("tool_check_reservations_result", user_id=user_id, found=bool(results), matches=len(results) if results else 0)
+
         if not results:
             return "This user has no reservations on file."
 
@@ -85,6 +94,7 @@ def check_reservations(user_id: str) -> str:
             ]
         )
     except Exception as e:
+        node_log("tool_check_reservations_error", user_id=user_id, error=str(e))
         return f"Database error: {str(e)}"
 
 
@@ -101,6 +111,7 @@ def save_ticket_summary(
     Ensures parent records exist in the 'tickets' table first.
     """
     try:
+        node_log("tool_save_ticket_summary", ticket_id=ticket_id, user_id=user_id, category=category)
         conn = sqlite3.connect(_get_db_path("udahub"))
         cursor = conn.cursor()
 
@@ -153,8 +164,10 @@ def save_ticket_summary(
 
         conn.commit()
         conn.close()
+        node_log("tool_save_ticket_summary_result", ticket_id=ticket_id, success=True)
         return f"Successfully archived ticket {ticket_id}."
     except Exception as e:
+        node_log("tool_save_ticket_summary_error", ticket_id=ticket_id, error=str(e))
         return f"Archiving failed: {str(e)}"
 
 

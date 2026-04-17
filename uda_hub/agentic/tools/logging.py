@@ -12,6 +12,10 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
+# In-memory evidence of tool usage during a single run. Each entry is a tuple
+# (tag, kwargs). This lets the workflow print a concise summary after streaming.
+TOOL_EVIDENCE: list[tuple[str, dict]] = []
+
 
 def _format_kv(**kwargs: Any) -> str:
     parts = []
@@ -35,3 +39,15 @@ def node_log(node: str, **kwargs: Any) -> None:
     """
     tag = node.upper()
     logger.info(f"[{tag}] {_format_kv(**kwargs)}")
+
+    # Record tool usage entries so the overall workflow can report them later.
+    try:
+        TOOL_EVIDENCE.append((tag, kwargs))
+    except Exception:
+        # Do not break logging if the evidence append fails for unexpected types
+        pass
+
+
+def get_tool_evidence() -> list[tuple[str, dict]]:
+    """Return a snapshot of recorded evidence entries."""
+    return list(TOOL_EVIDENCE)
